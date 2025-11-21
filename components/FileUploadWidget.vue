@@ -1,9 +1,9 @@
 <script lang="ts" setup>
-import { ref } from 'vue';
+import { ref } from "vue";
 
 const isOpen = ref(false);
 const selectedFile = ref<File | null>(null);
-const fileContent = ref<string>('');
+const fileContent = ref<string>("");
 
 const togglePanel = () => {
   isOpen.value = !isOpen.value;
@@ -12,11 +12,11 @@ const togglePanel = () => {
 const handleFileSelect = async (event: Event) => {
   const target = event.target as HTMLInputElement;
   const file = target.files?.[0];
-  
+
   if (!file) return;
-  
+
   selectedFile.value = file;
-  
+
   // 读取文件内容
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -27,10 +27,12 @@ const handleFileSelect = async (event: Event) => {
 
 const clearFile = () => {
   selectedFile.value = null;
-  fileContent.value = '';
-  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+  fileContent.value = "";
+  const input = document.querySelector(
+    'input[type="file"]'
+  ) as HTMLInputElement;
   if (input) {
-    input.value = '';
+    input.value = "";
   }
 };
 </script>
@@ -38,21 +40,21 @@ const clearFile = () => {
 <template>
   <div class="file-upload-widget">
     <!-- 右下角按钮 -->
-    <button 
+    <button
       class="toggle-button"
       @click="togglePanel"
       :class="{ active: isOpen }"
       title="打开文件上传"
     >
-      <svg 
-        xmlns="http://www.w3.org/2000/svg" 
-        width="24" 
-        height="24" 
-        viewBox="0 0 24 24" 
-        fill="none" 
-        stroke="currentColor" 
-        stroke-width="2" 
-        stroke-linecap="round" 
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
         stroke-linejoin="round"
       >
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -62,22 +64,19 @@ const clearFile = () => {
     </button>
 
     <!-- 浮窗面板 -->
-    <div 
-      v-if="isOpen" 
-      class="upload-panel"
-    >
+    <div v-if="isOpen" class="upload-panel">
       <div class="panel-header">
         <h3>文件上传</h3>
         <button class="close-button" @click="togglePanel" title="关闭">
-          <svg 
-            xmlns="http://www.w3.org/2000/svg" 
-            width="20" 
-            height="20" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            stroke-width="2" 
-            stroke-linecap="round" 
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
             stroke-linejoin="round"
           >
             <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -95,15 +94,15 @@ const clearFile = () => {
             class="file-input"
           />
           <label for="file-input" class="upload-label">
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              width="48" 
-              height="48" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              stroke-width="2" 
-              stroke-linecap="round" 
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
               stroke-linejoin="round"
             >
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -128,7 +127,7 @@ const clearFile = () => {
           </div>
           <div class="file-type">
             <strong>文件类型：</strong>
-            <span>{{ selectedFile.type || '未知' }}</span>
+            <span>{{ selectedFile.type || "未知" }}</span>
           </div>
         </div>
 
@@ -149,7 +148,8 @@ const clearFile = () => {
   bottom: 20px;
   right: 20px;
   z-index: 999999;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
 }
 
 .toggle-button {
@@ -357,7 +357,7 @@ const clearFile = () => {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 /* 滚动条样式 */
@@ -383,4 +383,3 @@ const clearFile = () => {
   background: #a0aec0;
 }
 </style>
-
