@@ -171,3 +171,125 @@ export function getSelectOptions(selector: string): Array<{ value: string; text:
   }));
 }
 
+/**
+ * 修改 input[type="text"] 输入框的值
+ * @param selector - 元素选择器（如 '#username' 或 'input[name="email"]'）
+ * @param value - 要设置的值
+ * @param triggerEvents - 是否触发事件（input, change, blur），默认 true
+ * @returns 是否成功修改
+ */
+export function changeInputValue(
+  selector: string,
+  value: string,
+  triggerEvents: boolean = true
+): boolean {
+  try {
+    // 查找 input 元素
+    const input = document.querySelector(selector) as HTMLInputElement;
+    
+    if (!input) {
+      console.warn(`未找到选择器 "${selector}" 对应的 input 元素`);
+      return false;
+    }
+
+    // 检查是否是文本类型的 input
+    const inputType = input.type.toLowerCase();
+    const textInputTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'];
+    
+    if (inputType !== 'text' && !textInputTypes.includes(inputType)) {
+      console.warn(`选择器 "${selector}" 对应的元素不是文本类型的 input (当前类型: ${inputType})`);
+      // 如果不是标准文本类型，仍然尝试修改（可能是自定义类型）
+    }
+
+    // 设置值
+    input.value = value;
+
+    // 触发事件
+    if (triggerEvents) {
+      triggerInputEvents(input);
+    }
+
+    console.log(`✅ 成功将 input "${selector}" 的值设置为: ${value}`);
+    return true;
+  } catch (error) {
+    console.error('修改 input 值时发生错误:', error);
+    return false;
+  }
+}
+
+/**
+ * 触发 input 相关事件
+ */
+function triggerInputEvents(input: HTMLInputElement): void {
+  // 触发 focus 事件（模拟用户聚焦）
+  const focusEvent = new Event('focus', {
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(focusEvent);
+
+  // 触发 input 事件（最常用，实时监听输入）
+  const inputEvent = new Event('input', {
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(inputEvent);
+
+  // 触发 change 事件（值改变时）
+  const changeEvent = new Event('change', {
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(changeEvent);
+
+  // 触发 blur 事件（模拟失去焦点，某些表单验证需要）
+  const blurEvent = new Event('blur', {
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(blurEvent);
+}
+
+/**
+ * 等待元素出现并修改 input 的值
+ * @param selector - 元素选择器
+ * @param value - 要设置的值
+ * @param triggerEvents - 是否触发事件
+ * @param timeout - 超时时间（毫秒），默认 5 秒
+ * @returns Promise<boolean> 是否成功修改
+ */
+export function changeInputValueWhenReady(
+  selector: string,
+  value: string,
+  triggerEvents: boolean = true,
+  timeout: number = 5000
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    // 先尝试立即执行
+    if (changeInputValue(selector, value, triggerEvents)) {
+      resolve(true);
+      return;
+    }
+
+    // 如果找不到，使用 MutationObserver 等待元素出现
+    const observer = new MutationObserver(() => {
+      if (changeInputValue(selector, value, triggerEvents)) {
+        observer.disconnect();
+        resolve(true);
+      }
+    });
+
+    // 开始观察
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    // 设置超时
+    setTimeout(() => {
+      observer.disconnect();
+      console.warn(`等待 input "${selector}" 出现超时（${timeout}ms）`);
+      resolve(false);
+    }, timeout);
+  });
+}
