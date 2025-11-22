@@ -1,5 +1,5 @@
 import { createApp } from 'vue';
-import FileUploadWidget from '@/components/FileUploadWidget.vue';
+import ContentScriptWrapper from '@/components/ContentScriptWrapper.vue';
 
 export default defineContentScript({
   matches: ['*://*/*'],
@@ -17,12 +17,12 @@ export default defineContentScript({
           document.body.appendChild(container);
         }
 
-        // 挂载 Vue 组件
+        // 挂载包装组件（由包装组件内部判断是否显示 FileUploadWidget）
         try {
-          const app = createApp(FileUploadWidget);
+          const app = createApp(ContentScriptWrapper);
           app.mount(container);
         } catch (error) {
-          console.error('文件上传组件挂载失败:', error);
+          console.error('ContentScript 包装组件挂载失败:', error);
         }
       } else {
         // 如果 body 还不存在，等待一下再试
