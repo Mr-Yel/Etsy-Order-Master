@@ -5,6 +5,7 @@ import {
   changeSelectOption,
   changeInputValue,
 } from "@/utils/dom-utils";
+import { downloadCSVTemplate } from "@/utils/csv-utils";
 
 // 订单数据类型定义
 type OrderData = {
@@ -215,6 +216,15 @@ const clearFile = () => {
     input.value = "";
   }
 };
+
+const handleDownloadTemplate = () => {
+  try {
+    downloadCSVTemplate("backFillEn");
+    console.log("✅ CSV 模板下载成功");
+  } catch (error) {
+    console.error("❌ CSV 模板下载失败:", error);
+  }
+};
 </script>
 
 <template>
@@ -246,7 +256,30 @@ const clearFile = () => {
     <!-- 浮窗面板 -->
     <div v-if="isOpen" class="upload-panel">
       <div class="panel-header">
-        <h3>文件上传</h3>
+        <div class="header-left">
+          <h3>文件上传</h3>
+          <button
+            class="download-template-button-icon"
+            @click="handleDownloadTemplate"
+            title="下载 CSV 模板文件"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </button>
+        </div>
         <button class="close-button" @click="togglePanel" title="关闭">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -419,6 +452,13 @@ const clearFile = () => {
   color: white;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
 .panel-header h3 {
   margin: 0;
   font-size: 18px;
@@ -440,6 +480,24 @@ const clearFile = () => {
 }
 
 .close-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.download-template-button-icon {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: white;
+  transition: background 0.2s ease;
+}
+
+.download-template-button-icon:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 

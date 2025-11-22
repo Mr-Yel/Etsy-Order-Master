@@ -164,6 +164,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import { CSV_HEADERS, buildCSVContent, downloadCSV } from "@/utils/csv-utils";
 
 // 订单类型定义
 type Order = {
@@ -217,15 +218,8 @@ const formParams = ref({
 });
 
 // CSV 导出函数
-function exportToCSV(orders: Order[], filename: string = "订单列表"): void {
+function exportToCSV(orders: Order[], filename: string = "backFillEn"): void {
   try {
-    // CSV 表头
-    const headers = [
-      "Etsy Order Number（Required）",
-      "Tracking Number（Required）",
-      'Shipping Carrier（Optional）,The shipping carrier will be automatically matched,according to the "Tracking Number"(please check carefully, if it does not automatically backfill, you can try to resubmit).',
-    ];
-
     // 构建 CSV 数据行
     const rows = orders.map((order) => {
       return [
@@ -235,37 +229,11 @@ function exportToCSV(orders: Order[], filename: string = "订单列表"): void {
       ];
     });
 
-    // 转义 CSV 单元格（处理包含逗号、引号、换行符的情况）
-    const escapeCSV = (cell: string): string => {
-      if (cell.includes(",") || cell.includes('"') || cell.includes("\n")) {
-        return `"${cell.replace(/"/g, '""')}"`;
-      }
-      return cell;
-    };
+    // 使用工具函数构建 CSV 内容
+    const csvContent = buildCSVContent(CSV_HEADERS, rows);
 
-    // 构建 CSV 内容
-    const csvContent = [
-      headers.map(escapeCSV).join(","),
-      ...rows.map((row) => row.map(escapeCSV).join(",")),
-    ].join("\n");
-
-    // 添加 UTF-8 BOM 以支持中文（Excel 需要）
-    const BOM = "\uFEFF";
-    const blob = new Blob([BOM + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
-
-    // 创建下载链接
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.href = url;
-    link.download = `${filename}.csv`;
-    document.body.appendChild(link);
-    link.click();
-
-    // 清理
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // 使用工具函数下载 CSV
+    downloadCSV(csvContent, filename);
 
     console.log(`✅ CSV 导出成功：${orders.length} 条订单`);
   } catch (error) {
