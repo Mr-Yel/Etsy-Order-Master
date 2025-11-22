@@ -12,19 +12,19 @@
 export function changeSelectOption(
   selector: string,
   optionValue: string,
-  matchBy: 'value' | 'text' | 'both' = 'both'
+  matchBy: "value" | "text" | "both" = "both"
 ): boolean {
   try {
     // 查找 select 元素
     const select = document.querySelector(selector) as HTMLSelectElement;
-    
+
     if (!select) {
-      console.warn(`未找到选择器 "${selector}" 对应的 select 元素`);
+      console.log(`⚠️ 未找到选择器 "${selector}" 对应的 select 元素`);
       return false;
     }
 
     // 如果 matchBy 是 'both'，先尝试按 value 匹配，失败再按 text 匹配
-    if (matchBy === 'both') {
+    if (matchBy === "both") {
       // 先尝试按 value 匹配
       if (trySelectByValue(select, optionValue)) {
         return true;
@@ -33,20 +33,22 @@ export function changeSelectOption(
       if (trySelectByText(select, optionValue)) {
         return true;
       }
-    } else if (matchBy === 'value') {
+    } else if (matchBy === "value") {
       if (trySelectByValue(select, optionValue)) {
         return true;
       }
-    } else if (matchBy === 'text') {
+    } else if (matchBy === "text") {
       if (trySelectByText(select, optionValue)) {
         return true;
       }
     }
 
-    console.warn(`在 select "${selector}" 中未找到值为 "${optionValue}" 的选项`);
+    console.log(
+      `⚠️ 在 select "${selector}" 中未找到值为 "${optionValue}" 的选项`
+    );
     return false;
   } catch (error) {
-    console.error('修改 select 选项时发生错误:', error);
+    console.error("❌ 修改 select 选项时发生错误:", error);
     return false;
   }
 }
@@ -55,10 +57,8 @@ export function changeSelectOption(
  * 按 value 属性匹配并选中选项
  */
 function trySelectByValue(select: HTMLSelectElement, value: string): boolean {
-  const option = Array.from(select.options).find(
-    (opt) => opt.value === value
-  );
-  
+  const option = Array.from(select.options).find((opt) => opt.value === value);
+
   if (option) {
     select.value = value;
     // 触发 change 事件，确保页面 JavaScript 能感知到变化
@@ -66,7 +66,7 @@ function trySelectByValue(select: HTMLSelectElement, value: string): boolean {
     console.log(`✅ 成功将 select 切换为选项值: ${value}`);
     return true;
   }
-  
+
   return false;
 }
 
@@ -75,17 +75,21 @@ function trySelectByValue(select: HTMLSelectElement, value: string): boolean {
  */
 function trySelectByText(select: HTMLSelectElement, text: string): boolean {
   const option = Array.from(select.options).find(
-    (opt) => opt.textContent?.trim() === text.trim() || opt.text?.trim() === text.trim()
+    (opt) =>
+      opt.textContent?.trim() === text.trim() ||
+      opt.text?.trim() === text.trim()
   );
-  
+
   if (option) {
     select.value = option.value;
     // 触发 change 事件，确保页面 JavaScript 能感知到变化
     triggerChangeEvent(select);
-    console.log(`✅ 成功将 select 切换为选项文本: ${text} (值: ${option.value})`);
+    console.log(
+      `✅ 成功将 select 切换为选项文本: ${text} (值: ${option.value})`
+    );
     return true;
   }
-  
+
   return false;
 }
 
@@ -94,14 +98,14 @@ function trySelectByText(select: HTMLSelectElement, text: string): boolean {
  */
 function triggerChangeEvent(select: HTMLSelectElement): void {
   // 创建并派发 change 事件
-  const changeEvent = new Event('change', {
+  const changeEvent = new Event("change", {
     bubbles: true,
     cancelable: true,
   });
   select.dispatchEvent(changeEvent);
 
   // 也触发 input 事件（某些网站可能监听这个）
-  const inputEvent = new Event('input', {
+  const inputEvent = new Event("input", {
     bubbles: true,
     cancelable: true,
   });
@@ -119,7 +123,7 @@ function triggerChangeEvent(select: HTMLSelectElement): void {
 export function changeSelectOptionWhenReady(
   selector: string,
   optionValue: string,
-  matchBy: 'value' | 'text' | 'both' = 'both',
+  matchBy: "value" | "text" | "both" = "both",
   timeout: number = 2000
 ): Promise<boolean> {
   return new Promise((resolve) => {
@@ -135,7 +139,7 @@ export function changeSelectOptionWhenReady(
 
     const checkAndUpdate = () => {
       if (isResolved) return;
-      
+
       if (changeSelectOption(selector, optionValue, matchBy)) {
         isResolved = true;
         if (timeoutId) clearTimeout(timeoutId);
@@ -176,9 +180,11 @@ export function changeSelectOptionWhenReady(
  * @param selector - 元素选择器
  * @returns 选项信息数组
  */
-export function getSelectOptions(selector: string): Array<{ value: string; text: string }> {
+export function getSelectOptions(
+  selector: string
+): Array<{ value: string; text: string }> {
   const select = document.querySelector(selector) as HTMLSelectElement;
-  
+
   if (!select) {
     console.warn(`未找到选择器 "${selector}" 对应的 select 元素`);
     return [];
@@ -186,7 +192,7 @@ export function getSelectOptions(selector: string): Array<{ value: string; text:
 
   return Array.from(select.options).map((opt) => ({
     value: opt.value,
-    text: opt.textContent?.trim() || opt.text?.trim() || '',
+    text: opt.textContent?.trim() || opt.text?.trim() || "",
   }));
 }
 
@@ -205,18 +211,28 @@ export function changeInputValue(
   try {
     // 查找 input 元素
     const input = document.querySelector(selector) as HTMLInputElement;
-    
+
     if (!input) {
-      console.warn(`未找到选择器 "${selector}" 对应的 input 元素`);
+      console.log(`⚠️ 未找到选择器 "${selector}" 对应的 input 元素`);
       return false;
     }
 
     // 检查是否是文本类型的 input
     const inputType = input.type.toLowerCase();
-    const textInputTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'];
-    
-    if (inputType !== 'text' && !textInputTypes.includes(inputType)) {
-      console.warn(`选择器 "${selector}" 对应的元素不是文本类型的 input (当前类型: ${inputType})`);
+    const textInputTypes = [
+      "text",
+      "email",
+      "password",
+      "search",
+      "tel",
+      "url",
+      "number",
+    ];
+
+    if (inputType !== "text" && !textInputTypes.includes(inputType)) {
+      console.log(
+        `⚠️ 选择器 "${selector}" 对应的元素不是文本类型的 input (当前类型: ${inputType})`
+      );
       // 如果不是标准文本类型，仍然尝试修改（可能是自定义类型）
     }
 
@@ -231,7 +247,7 @@ export function changeInputValue(
     console.log(`✅ 成功将 input "${selector}" 的值设置为: ${value}`);
     return true;
   } catch (error) {
-    console.error('修改 input 值时发生错误:', error);
+    console.error("❌ 修改 input 值时发生错误:", error);
     return false;
   }
 }
@@ -241,28 +257,28 @@ export function changeInputValue(
  */
 function triggerInputEvents(input: HTMLInputElement): void {
   // 触发 focus 事件（模拟用户聚焦）
-  const focusEvent = new Event('focus', {
+  const focusEvent = new Event("focus", {
     bubbles: true,
     cancelable: true,
   });
   input.dispatchEvent(focusEvent);
 
   // 触发 input 事件（最常用，实时监听输入）
-  const inputEvent = new Event('input', {
+  const inputEvent = new Event("input", {
     bubbles: true,
     cancelable: true,
   });
   input.dispatchEvent(inputEvent);
 
   // 触发 change 事件（值改变时）
-  const changeEvent = new Event('change', {
+  const changeEvent = new Event("change", {
     bubbles: true,
     cancelable: true,
   });
   input.dispatchEvent(changeEvent);
 
   // 触发 blur 事件（模拟失去焦点，某些表单验证需要）
-  const blurEvent = new Event('blur', {
+  const blurEvent = new Event("blur", {
     bubbles: true,
     cancelable: true,
   });
@@ -296,7 +312,7 @@ export function changeInputValueWhenReady(
 
     const checkAndUpdate = () => {
       if (isResolved) return;
-      
+
       if (changeInputValue(selector, value, triggerEvents)) {
         isResolved = true;
         if (timeoutId) clearTimeout(timeoutId);
