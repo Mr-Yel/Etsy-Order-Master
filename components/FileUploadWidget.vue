@@ -308,18 +308,28 @@ const clearFile = () => {
 
         <!-- 匹配结果 -->
         <div
-          v-if="!isProcessing && matchCount > 0 && !parseError"
-          class="match-result"
+          v-if="!isProcessing && parsedData.length > 0 && !parseError"
+          :class="[
+            'match-result',
+            matchCount === 0 ? 'match-result-empty' : ''
+          ]"
         >
           <div class="match-header">
-            <strong>✅ 匹配成功</strong>
+            <strong v-if="matchCount > 0">✅ 匹配成功</strong>
+            <strong v-else>⚠️ 未找到匹配</strong>
             <button class="clear-button" @click="clearFile" title="清除">
               ×
             </button>
           </div>
           <div class="match-count">
-            成功匹配 <strong>{{ matchCount }}</strong> 个订单
-            <span class="total-count">/ {{ parsedData.length }} 个</span>
+            <template v-if="matchCount > 0">
+              成功匹配 <strong>{{ matchCount }}</strong> 个订单
+              <span class="total-count">/ {{ parsedData.length }} 个</span>
+            </template>
+            <template v-else>
+              未匹配到任何订单
+              <span class="total-count">（共 {{ parsedData.length }} 个订单）</span>
+            </template>
           </div>
           <div v-if="matchedOrders.length > 0" class="matched-orders">
             <div class="orders-label">匹配的订单号：</div>
@@ -592,6 +602,12 @@ const clearFile = () => {
   font-size: 14px;
 }
 
+.match-result-empty {
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
 .match-header {
   display: flex;
   justify-content: space-between;
@@ -604,6 +620,10 @@ const clearFile = () => {
   font-size: 16px;
 }
 
+.match-result-empty .match-header strong {
+  color: #d97706;
+}
+
 .match-count {
   margin-bottom: 12px;
   font-size: 14px;
@@ -612,6 +632,10 @@ const clearFile = () => {
 .match-count strong {
   color: #16a34a;
   font-size: 18px;
+}
+
+.match-result-empty .match-count strong {
+  color: #d97706;
 }
 
 .total-count {
