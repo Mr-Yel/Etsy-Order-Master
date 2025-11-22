@@ -120,7 +120,7 @@ export function changeSelectOptionWhenReady(
   selector: string,
   optionValue: string,
   matchBy: 'value' | 'text' | 'both' = 'both',
-  timeout: number = 5000
+  timeout: number = 2000
 ): Promise<boolean> {
   return new Promise((resolve) => {
     // 先尝试立即执行
@@ -129,15 +129,30 @@ export function changeSelectOptionWhenReady(
       return;
     }
 
-    // 如果找不到，使用 MutationObserver 等待元素出现
-    const observer = new MutationObserver(() => {
+    // 如果找不到，使用防抖的 MutationObserver 等待元素出现
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let isResolved = false;
+
+    const checkAndUpdate = () => {
+      if (isResolved) return;
+      
       if (changeSelectOption(selector, optionValue, matchBy)) {
+        isResolved = true;
+        if (timeoutId) clearTimeout(timeoutId);
         observer.disconnect();
         resolve(true);
       }
-    });
+    };
 
-    // 开始观察
+    // 使用防抖，避免频繁调用
+    const debouncedCheck = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(checkAndUpdate, 50); // 50ms 防抖
+    };
+
+    const observer = new MutationObserver(debouncedCheck);
+
+    // 开始观察（只观察子节点变化，减少性能开销）
     observer.observe(document.body, {
       childList: true,
       subtree: true,
@@ -145,9 +160,13 @@ export function changeSelectOptionWhenReady(
 
     // 设置超时
     setTimeout(() => {
-      observer.disconnect();
-      console.warn(`等待 select "${selector}" 出现超时（${timeout}ms）`);
-      resolve(false);
+      if (!isResolved) {
+        isResolved = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        observer.disconnect();
+        console.warn(`等待 select "${selector}" 出现超时（${timeout}ms）`);
+        resolve(false);
+      }
     }, timeout);
   });
 }
@@ -262,7 +281,7 @@ export function changeInputValueWhenReady(
   selector: string,
   value: string,
   triggerEvents: boolean = true,
-  timeout: number = 5000
+  timeout: number = 2000
 ): Promise<boolean> {
   return new Promise((resolve) => {
     // 先尝试立即执行
@@ -271,15 +290,30 @@ export function changeInputValueWhenReady(
       return;
     }
 
-    // 如果找不到，使用 MutationObserver 等待元素出现
-    const observer = new MutationObserver(() => {
+    // 如果找不到，使用防抖的 MutationObserver 等待元素出现
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let isResolved = false;
+
+    const checkAndUpdate = () => {
+      if (isResolved) return;
+      
       if (changeInputValue(selector, value, triggerEvents)) {
+        isResolved = true;
+        if (timeoutId) clearTimeout(timeoutId);
         observer.disconnect();
         resolve(true);
       }
-    });
+    };
 
-    // 开始观察
+    // 使用防抖，避免频繁调用
+    const debouncedCheck = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(checkAndUpdate, 50); // 50ms 防抖
+    };
+
+    const observer = new MutationObserver(debouncedCheck);
+
+    // 开始观察（只观察子节点变化，减少性能开销）
     observer.observe(document.body, {
       childList: true,
       subtree: true,
@@ -287,9 +321,13 @@ export function changeInputValueWhenReady(
 
     // 设置超时
     setTimeout(() => {
-      observer.disconnect();
-      console.warn(`等待 input "${selector}" 出现超时（${timeout}ms）`);
-      resolve(false);
+      if (!isResolved) {
+        isResolved = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        observer.disconnect();
+        console.warn(`等待 input "${selector}" 出现超时（${timeout}ms）`);
+        resolve(false);
+      }
     }, timeout);
   });
 }

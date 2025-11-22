@@ -8,10 +8,16 @@ importers:
 
   .:
     dependencies:
+      papaparse:
+        specifier: ^5.5.3
+        version: 5.5.3
       vue:
         specifier: ^3.5.21
         version: 3.5.24(typescript@5.9.3)
     devDependencies:
+      '@types/papaparse':
+        specifier: ^5.5.0
+        version: 5.5.0
       '@wxt-dev/module-vue':
         specifier: ^1.0.2
         version: 1.0.3(vite@7.2.4(@types/node@24.10.1)(jiti@2.6.1))(vue@3.5.24(typescript@5.9.3))(wxt@0.20.11(@types/node@24.10.1)(jiti@2.6.1)(rollup@4.53.3))
@@ -423,6 +429,9 @@ packages:
 
   '@types/node@24.10.1':
     resolution: {integrity: sha512-GNWcUTRBgIRJD5zj+Tq0fKOJ5XZajIiBroOF0yvj2bSU1WvNdYS/dn9UxwsujGW4JX06dnHyjV2y9rRaybH0iQ==}
+
+  '@types/papaparse@5.5.0':
+    resolution: {integrity: sha512-GVs5iMQmUr54BAZYYkByv8zPofFxmyxUpISPb2oh8sayR3+1zbxasrOvoKiHJ/nnoq/uULuPsu1Lze1EkagVFg==}
 
   '@vitejs/plugin-vue@6.0.2':
     resolution: {integrity: sha512-iHmwV3QcVGGvSC1BG5bZ4z6iwa1SOpAPWmnjOErd4Ske+lZua5K9TtAVdx0gMBClJ28DViCbSmZitjWZsWO3LA==}
@@ -1259,6 +1268,9 @@ packages:
   pako@1.0.11:
     resolution: {integrity: sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==}
 
+  papaparse@5.5.3:
+    resolution: {integrity: sha512-5QvjGxYVjxO59MGU2lHVYpRWBBtKHnlIAcSe1uNFCkkptUh63NFRj0FJQm7nR67puEruUci/ZkjmEFrjCAyP4A==}
+
   parse-json@7.1.1:
     resolution: {integrity: sha512-SgOTCX/EZXtZxBE5eJ97P4yGM5n37BwRU+YMsH4vNzFqJV/oWFXXCmwFlgWUM4PrakybVOueJJ6pwHqSVhTFDw==}
     engines: {node: '>=16'}
@@ -1989,6 +2001,10 @@ snapshots:
   '@types/node@24.10.1':
     dependencies:
       undici-types: 7.16.0
+
+  '@types/papaparse@5.5.0':
+    dependencies:
+      '@types/node': 24.10.1
 
   '@vitejs/plugin-vue@6.0.2(vite@7.2.4(@types/node@24.10.1)(jiti@2.6.1))(vue@3.5.24(typescript@5.9.3))':
     dependencies:
@@ -2816,6 +2832,8 @@ snapshots:
       semver: 7.7.3
 
   pako@1.0.11: {}
+
+  papaparse@5.5.3: {}
 
   parse-json@7.1.1:
     dependencies:
