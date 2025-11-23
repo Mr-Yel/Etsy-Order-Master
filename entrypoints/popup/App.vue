@@ -397,6 +397,74 @@ async function getCookiesFromBrowser(): Promise<string | null> {
   }
 }
 
+/**
+ * 执行单次订单请求
+ * @param shopId 店铺 ID
+ * @param limit 本次请求的 limit
+ * @param offset 本次请求的 offset
+ * @returns Promise<Order[]> 订单数组
+ */
+async function fetchOrdersPage(
+  shopId: number,
+  limit: number,
+  offset: number
+): Promise<Order[]> {
+  // 构建参数对象
+  const params: Record<string, string> = {
+    "filters[buyer_id]": "all",
+    "filters[channel]": "all",
+    "filters[completed_status]": "all",
+    "filters[completed_date]": "all",
+    "filters[destination]": formParams.value.destination,
+    "filters[ship_date]": formParams.value.shipDate,
+    "filters[shipping_label_eligibility]": "false",
+    "filters[shipping_label_status]": "all",
+    "filters[has_buyer_notes]": formParams.value.hasBuyerNotes
+      ? "true"
+      : "false",
+    "filters[is_marked_as_gift]": formParams.value.isMarkedAsGift
+      ? "true"
+      : "false",
+    "filters[is_personalized]": formParams.value.isPersonalized
+      ? "true"
+      : "false",
+    "filters[has_shipping_upgrade]": formParams.value.hasShippingUpgrade
+      ? "true"
+      : "false",
+    "filters[order_state_id]": String(formParams.value.orderStateId),
+    limit: String(limit),
+    offset: String(offset),
+    search_terms: "",
+    sort_by: "expected_ship_date",
+    sort_order: "asc",
+    "objects_enabled_for_normalization[order_state]": "true",
+  };
+
+  // 构建完整的 URL
+  const baseUrl = `https://www.etsy.com/api/v3/ajax/bespoke/shop/${shopId}/mission-control/orders/data`;
+  const url = baseUrl + "?" + new URLSearchParams(params).toString();
+
+  console.log(`📤 请求第 ${Math.floor(offset / 50) + 1} 页: limit=${limit}, offset=${offset}`);
+
+  // 发送 fetch 请求
+  const response = await fetch(url, {
+    method: "GET",
+  });
+
+  console.log(`📥 响应状态: ${response.status}`);
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const orders = data?.orders_search?.orders || [];
+
+  console.log(`✅ 第 ${Math.floor(offset / 50) + 1} 页获取到 ${orders.length} 条订单`);
+
+  return orders;
+}
+
 async function fetchAndExportOrders() {
   isLoading.value = true;
   orderCount.value = 0;
@@ -419,100 +487,61 @@ async function fetchAndExportOrders() {
     // 缓存 shopId
     shopId.value = currentShopId;
 
-    // // 使用 chrome.cookies API 获取所有 cookie（包括 HttpOnly）
-    // const cookies = await getCookiesFromBrowser();
+    const requestedLimit = formParams.value.limit;
+    const MAX_LIMIT_PER_REQUEST = 50; // 服务端限制每次最多 50 条
 
-    // if (!cookies) {
-    //   exportStatus.value = "error";
-    //   exportMessage.value = "无法获取页面 cookie，请确保在 Etsy 页面打开此扩展";
-    //   return;
-    // }
+    // 所有订单结果
+    const allOrders: Order[] = [];
+    let currentOffset = 0;
+    let remainingLimit = requestedLimit;
 
-    // 构建参数对象
-    const params: Record<string, string> = {
-      "filters[buyer_id]": "all",
-      "filters[channel]": "all",
-      "filters[completed_status]": "all",
-      "filters[completed_date]": "all",
-      "filters[destination]": formParams.value.destination,
-      "filters[ship_date]": formParams.value.shipDate,
-      "filters[shipping_label_eligibility]": "false",
-      "filters[shipping_label_status]": "all",
-      "filters[has_buyer_notes]": formParams.value.hasBuyerNotes
-        ? "true"
-        : "false",
-      "filters[is_marked_as_gift]": formParams.value.isMarkedAsGift
-        ? "true"
-        : "false",
-      "filters[is_personalized]": formParams.value.isPersonalized
-        ? "true"
-        : "false",
-      "filters[has_shipping_upgrade]": formParams.value.hasShippingUpgrade
-        ? "true"
-        : "false",
-      "filters[order_state_id]": String(formParams.value.orderStateId),
-      limit: String(formParams.value.limit),
-      offset: "0",
-      search_terms: "",
-      sort_by: "expected_ship_date",
-      sort_order: "asc",
-      "objects_enabled_for_normalization[order_state]": "true",
-    };
+    // 分页请求，直到获取到足够的订单或到达末尾
+    while (remainingLimit > 0) {
+      // 本次请求的 limit（最多 50）
+      const currentLimit = Math.min(remainingLimit, MAX_LIMIT_PER_REQUEST);
 
-    // 构建完整的 URL
-    const baseUrl = `https://www.etsy.com/api/v3/ajax/bespoke/shop/${currentShopId}/mission-control/orders/data`;
-    const url = baseUrl + "?" + new URLSearchParams(params).toString();
+      // 执行请求
+      const orders = await fetchOrdersPage(
+        currentShopId,
+        currentLimit,
+        currentOffset
+      );
 
-    console.log("请求 URL:", url);
+      // 将本次获取的订单添加到总结果中
+      allOrders.push(...orders);
 
-    // 构建请求头，手动设置 Cookie，并添加必要的浏览器请求头
-    // const headers: Record<string, string> = {
-    //   accept: "*/*",
-    //   "accept-encoding": "gzip, deflate, br, zstd",
-    //   "accept-language": "zh-HK,zh-TW;q=0.9,zh;q=0.8",
-    //   "user-agent":
-    //     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    //   "sec-ch-ua":
-    //     '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-    //   "sec-ch-ua-mobile": "?0",
-    //   "sec-ch-ua-platform": '"Windows"',
-    //   "sec-fetch-dest": "empty",
-    //   "sec-fetch-mode": "cors",
-    //   "sec-fetch-site": "same-origin", // 虽然从扩展发起，但设置为 same-origin 以匹配浏览器行为
-    //   priority: "u=1, i",
-    //   Cookie: cookies, // 手动设置从主页面获取的 cookie
-    // };
+      // 如果返回的订单数量少于请求的 limit，说明已经到达末尾
+      if (orders.length < currentLimit) {
+        console.log(
+          `⚠️ 已到达末尾，返回的订单数量 (${orders.length}) 少于请求的数量 (${currentLimit})`
+        );
+        break;
+      }
 
-    // 发送 fetch 请求
-    const response = await fetch(url, {
-      method: "GET",
-      // credentials: "include",
-      // headers: {
-      //   accept: "*/*",
-      //   "accept-language": "zh-HK,zh-TW;q=0.9,zh;q=0.8",
-      //   "sec-fetch-dest": "empty",
-      //   "sec-fetch-mode": "cors",
-      //   "sec-fetch-site": "same-origin",
-      // },
-      // headers,
-    });
+      // 更新 offset 和剩余 limit
+      currentOffset += orders.length;
+      remainingLimit -= orders.length;
 
-    console.log("响应状态:", response.status);
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      // 如果已经获取到足够的订单，提前终止
+      if (allOrders.length >= requestedLimit) {
+        break;
+      }
     }
 
-    const data = await response.json();
-    console.log("响应数据:", data);
+    // 如果请求的数量超过实际数量，截取到请求的数量
+    const finalOrders =
+      allOrders.length > requestedLimit
+        ? allOrders.slice(0, requestedLimit)
+        : allOrders;
 
-    const fetchedOrders = data?.orders_search?.orders || [];
-    console.log("订单列表:", fetchedOrders);
+    console.log(
+      `📊 总共获取到 ${finalOrders.length} 条订单（请求 ${requestedLimit} 条）`
+    );
 
     // 更新订单数量
-    orderCount.value = fetchedOrders.length;
+    orderCount.value = finalOrders.length;
 
-    if (fetchedOrders.length === 0) {
+    if (finalOrders.length === 0) {
       exportStatus.value = "error";
       exportMessage.value = "未获取到任何订单数据";
       return;
@@ -520,11 +549,11 @@ async function fetchAndExportOrders() {
 
     // 导出 CSV
     const filename = `backFillEn`;
-    exportToCSV(fetchedOrders, filename);
+    exportToCSV(finalOrders, filename);
 
     // 更新导出状态
     exportStatus.value = "success";
-    exportMessage.value = `已成功导出 ${fetchedOrders.length} 条订单到 CSV 文件`;
+    exportMessage.value = `已成功导出 ${finalOrders.length} 条订单到 CSV 文件`;
   } catch (error) {
     console.error("获取订单失败:", error);
     exportStatus.value = "error";
