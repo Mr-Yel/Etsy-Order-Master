@@ -174,6 +174,7 @@ const isLoading = ref(false);
 const orderCount = ref(0);
 const exportStatus = ref<"success" | "error" | "">("");
 const exportMessage = ref("");
+const shopId = ref<number | null>(null);
 
 const orderStateIdMap = {
   New: 1407795702316,
@@ -239,6 +240,49 @@ function exportToCSV(orders: Order[], filename: string = "backFillEn"): void {
   }
 }
 
+// 通过 content script 获取 shopId
+async function getShopIdFromContentScript(): Promise<number | null> {
+  try {
+    // 获取当前活动标签页
+    const tabs = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+
+    if (tabs.length === 0 || !tabs[0].id) {
+      console.warn("未找到活动标签页");
+      return null;
+    }
+
+    const tabId = tabs[0].id;
+
+    // 直接发送消息到 content script 获取 shopId
+    // 让 content script 来判断是否在 Etsy 页面以及 shopId 是否存在
+    const response = await browser.tabs.sendMessage(tabId, {
+      type: "GET_SHOP_ID",
+    });
+
+    if (response?.success && response?.shopId) {
+      console.log("✅ 成功获取 shopId:", response.shopId);
+      return response.shopId;
+    } else {
+      console.warn("⚠️ 获取 shopId 失败:", response?.error || "未知错误");
+      return null;
+    }
+  } catch (error) {
+    // 处理 content script 未注入的情况
+    if (
+      error instanceof Error &&
+      error.message.includes("Could not establish connection")
+    ) {
+      console.error("Content script 未注入，可能需要刷新页面");
+    } else {
+      console.error("获取 shopId 时发生错误:", error);
+    }
+    return null;
+  }
+}
+
 // 获取订单数据并导出
 /**
  * 使用 chrome.cookies API 获取所有 cookie（包括 HttpOnly）
@@ -267,7 +311,6 @@ async function getCookiesFromBrowser(): Promise<string | null> {
     // 解析 URL 获取域名
     const urlObj = new URL(tabUrl);
     const domain = urlObj.hostname;
-    console.log("🚀 ~ getCookiesFromBrowser ~ domain:", domain)
 
     // 使用 chrome.cookies API 获取所有 cookie（包括 HttpOnly）
     const cookies = await browser.cookies.getAll({
@@ -309,6 +352,20 @@ async function fetchAndExportOrders() {
   exportMessage.value = "";
 
   try {
+    // 通过 content script 获取 shopId
+    const currentShopId = await getShopIdFromContentScript();
+
+    if (!currentShopId) {
+      exportStatus.value = "error";
+      exportMessage.value =
+        "无法获取店铺 ID，请确保在 Etsy 店铺管理页面打开此扩展，并刷新页面后重试";
+      isLoading.value = false;
+      return;
+    }
+
+    // 缓存 shopId
+    shopId.value = currentShopId;
+
     // // 使用 chrome.cookies API 获取所有 cookie（包括 HttpOnly）
     // const cookies = await getCookiesFromBrowser();
 
@@ -350,8 +407,7 @@ async function fetchAndExportOrders() {
     };
 
     // 构建完整的 URL
-    const baseUrl =
-      "https://www.etsy.com/api/v3/ajax/bespoke/shop/62018722/mission-control/orders/data";
+    const baseUrl = `https://www.etsy.com/api/v3/ajax/bespoke/shop/${currentShopId}/mission-control/orders/data`;
     const url = baseUrl + "?" + new URLSearchParams(params).toString();
 
     console.log("请求 URL:", url);
@@ -377,14 +433,14 @@ async function fetchAndExportOrders() {
     // 发送 fetch 请求
     const response = await fetch(url, {
       method: "GET",
-      credentials: "include",
-      headers: {
-        accept: "*/*",
-        "accept-language": "zh-HK,zh-TW;q=0.9,zh;q=0.8",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-      },
+      // credentials: "include",
+      // headers: {
+      //   accept: "*/*",
+      //   "accept-language": "zh-HK,zh-TW;q=0.9,zh;q=0.8",
+      //   "sec-fetch-dest": "empty",
+      //   "sec-fetch-mode": "cors",
+      //   "sec-fetch-site": "same-origin",
+      // },
       // headers,
     });
 
