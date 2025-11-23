@@ -138,10 +138,7 @@
 
       <!-- 状态显示 -->
       <div v-if="orderCount > 0 || exportStatus" class="status-section">
-        <div
-          v-if="orderCount > 0"
-          class="status-message status-success"
-        >
+        <div v-if="orderCount > 0" class="status-message status-success">
           <span class="status-label">获取成功：</span>
           共获取到 {{ orderCount }} 条订单
         </div>
@@ -243,6 +240,68 @@ function exportToCSV(orders: Order[], filename: string = "backFillEn"): void {
 }
 
 // 获取订单数据并导出
+/**
+ * 使用 chrome.cookies API 获取所有 cookie（包括 HttpOnly）
+ * 这是更可靠的方法，可以获取浏览器实际发送的 cookie
+ */
+async function getCookiesFromBrowser(): Promise<string | null> {
+  try {
+    // 获取当前活动标签页
+    const tabs = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    if (tabs.length === 0 || !tabs[0].url) {
+      console.warn("未找到活动标签页");
+      return null;
+    }
+
+    const tabUrl = tabs[0].url;
+
+    // // 检查是否是 etsy.com 的页面
+    // if (!tabUrl || !tabUrl.includes('etsy.com')) {
+    //   console.warn("当前标签页不是 Etsy 页面:", tabUrl);
+    //   return null;
+    // }
+
+    // 解析 URL 获取域名
+    const urlObj = new URL(tabUrl);
+    const domain = urlObj.hostname;
+    console.log("🚀 ~ getCookiesFromBrowser ~ domain:", domain)
+
+    // 使用 chrome.cookies API 获取所有 cookie（包括 HttpOnly）
+    const cookies = await browser.cookies.getAll({
+      domain: domain,
+    });
+
+    if (cookies.length === 0) {
+      console.warn("未找到任何 cookie");
+      return null;
+    }
+
+    // 将 cookie 数组转换为 Cookie 请求头格式
+    const cookieString = cookies
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join("; ");
+
+    console.log("✅ 成功获取浏览器 cookie（包括 HttpOnly）");
+    console.log("📋 Cookie 数量:", cookies.length);
+    console.log("📋 Cookie 字符串长度:", cookieString.length);
+
+    // 调试：检查 datadome cookie
+    const datadomeCookie = cookies.find((c) => c.name === "datadome");
+    if (datadomeCookie) {
+      console.log("🔍 datadome cookie 值:", datadomeCookie.value);
+      console.log("🔍 datadome cookie HttpOnly:", datadomeCookie.httpOnly);
+    }
+
+    return cookieString;
+  } catch (error) {
+    console.error("获取 cookie 时发生错误:", error);
+    return null;
+  }
+}
+
 async function fetchAndExportOrders() {
   isLoading.value = true;
   orderCount.value = 0;
@@ -250,6 +309,15 @@ async function fetchAndExportOrders() {
   exportMessage.value = "";
 
   try {
+    // // 使用 chrome.cookies API 获取所有 cookie（包括 HttpOnly）
+    // const cookies = await getCookiesFromBrowser();
+
+    // if (!cookies) {
+    //   exportStatus.value = "error";
+    //   exportMessage.value = "无法获取页面 cookie，请确保在 Etsy 页面打开此扩展";
+    //   return;
+    // }
+
     // 构建参数对象
     const params: Record<string, string> = {
       "filters[buyer_id]": "all",
@@ -260,10 +328,18 @@ async function fetchAndExportOrders() {
       "filters[ship_date]": formParams.value.shipDate,
       "filters[shipping_label_eligibility]": "false",
       "filters[shipping_label_status]": "all",
-      "filters[has_buyer_notes]": formParams.value.hasBuyerNotes ? "true" : "false",
-      "filters[is_marked_as_gift]": formParams.value.isMarkedAsGift ? "true" : "false",
-      "filters[is_personalized]": formParams.value.isPersonalized ? "true" : "false",
-      "filters[has_shipping_upgrade]": formParams.value.hasShippingUpgrade ? "true" : "false",
+      "filters[has_buyer_notes]": formParams.value.hasBuyerNotes
+        ? "true"
+        : "false",
+      "filters[is_marked_as_gift]": formParams.value.isMarkedAsGift
+        ? "true"
+        : "false",
+      "filters[is_personalized]": formParams.value.isPersonalized
+        ? "true"
+        : "false",
+      "filters[has_shipping_upgrade]": formParams.value.hasShippingUpgrade
+        ? "true"
+        : "false",
       "filters[order_state_id]": String(formParams.value.orderStateId),
       limit: String(formParams.value.limit),
       offset: "0",
@@ -280,6 +356,24 @@ async function fetchAndExportOrders() {
 
     console.log("请求 URL:", url);
 
+    // 构建请求头，手动设置 Cookie，并添加必要的浏览器请求头
+    // const headers: Record<string, string> = {
+    //   accept: "*/*",
+    //   "accept-encoding": "gzip, deflate, br, zstd",
+    //   "accept-language": "zh-HK,zh-TW;q=0.9,zh;q=0.8",
+    //   "user-agent":
+    //     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    //   "sec-ch-ua":
+    //     '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+    //   "sec-ch-ua-mobile": "?0",
+    //   "sec-ch-ua-platform": '"Windows"',
+    //   "sec-fetch-dest": "empty",
+    //   "sec-fetch-mode": "cors",
+    //   "sec-fetch-site": "same-origin", // 虽然从扩展发起，但设置为 same-origin 以匹配浏览器行为
+    //   priority: "u=1, i",
+    //   Cookie: cookies, // 手动设置从主页面获取的 cookie
+    // };
+
     // 发送 fetch 请求
     const response = await fetch(url, {
       method: "GET",
@@ -291,6 +385,7 @@ async function fetchAndExportOrders() {
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-origin",
       },
+      // headers,
     });
 
     console.log("响应状态:", response.status);

@@ -6,6 +6,22 @@ export default defineContentScript({
   runAt: 'document_end',
   registration: 'manifest',
   main() {
+    // 监听来自 popup 的消息，返回当前页面的 cookie
+    browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      console.log("🚀 ~ browser.runtime.onMessage.addListener ~ message:", message)
+      if (message.type === 'GET_COOKIES') {
+        try {
+          // 从当前页面获取完整的 cookie
+          const cookies = document.cookie;
+          sendResponse({ success: true, cookies });
+        } catch (error) {
+          console.error('获取 cookie 失败:', error);
+          sendResponse({ success: false, error: error instanceof Error ? error.message : '未知错误' });
+        }
+        return true; // 保持消息通道开放，用于异步响应
+      }
+    });
+
     // 等待 DOM 完全加载
     const init = () => {
       if (document.body) {
