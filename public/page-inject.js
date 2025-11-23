@@ -15,47 +15,53 @@
     if (event.source !== window) return;
 
     // 检查消息类型
-    if (event.data && event.data.type === "get-shop-id") {
+    if (event.data && event.data.type === "get-etsy-data") {
       try {
-        // 在主世界中直接访问 window.Etsy 对象
-        const shopId = window.Etsy?.Context?.data?.shop_id;
+        // 在主世界中直接访问 window.Etsy.Context.data 对象
+        const etsyData = window.Etsy?.Context?.data;
 
-        if (shopId) {
-          console.log("✅ [主世界] 成功获取 shopId:", shopId);
+        if (etsyData) {
+          const shopId = etsyData.shop_id;
+          const orderStates = etsyData.order_states;
+
+          console.log("✅ [主世界] 成功获取 Etsy 数据");
+          console.log("📋 [主世界] shopId:", shopId);
+          console.log("📋 [主世界] order_states 数量:", orderStates?.length || 0);
 
           // 发送响应回隔离世界
           window.postMessage(
             {
-              type: "shop-id-response",
+              type: "etsy-data-response",
               requestId: event.data.requestId,
               success: true,
               shopId: shopId,
+              orderStates: orderStates,
             },
             "*"
           );
         } else {
           console.warn(
-            "⚠️ [主世界] 无法获取 shopId，window.Etsy.Context.data.shop_id 不存在"
+            "⚠️ [主世界] 无法获取 Etsy 数据，window.Etsy.Context.data 不存在"
           );
 
           // 发送错误响应
           window.postMessage(
             {
-              type: "shop-id-response",
+              type: "etsy-data-response",
               requestId: event.data.requestId,
               success: false,
-              error: "无法获取 shopId，请确保在 Etsy 店铺管理页面打开此扩展",
+              error: "无法获取 Etsy 数据，请确保在 Etsy 店铺管理页面打开此扩展",
             },
             "*"
           );
         }
       } catch (error) {
-        console.error("❌ [主世界] 获取 shopId 失败:", error);
+        console.error("❌ [主世界] 获取 Etsy 数据失败:", error);
 
         // 发送错误响应
         window.postMessage(
           {
-            type: "shop-id-response",
+            type: "etsy-data-response",
             requestId: event.data.requestId,
             success: false,
             error: error instanceof Error ? error.message : "未知错误",

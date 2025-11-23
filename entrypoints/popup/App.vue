@@ -160,13 +160,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import { CSV_HEADERS, buildCSVContent, downloadCSV } from "@/utils/csv-utils";
 
 // 订单类型定义
 type Order = {
   order_id: number;
   [key: string]: any;
+};
+
+// 订单状态类型定义
+type OrderState = {
+  type: string;
+  order_state_id: number;
+  client_id: number | null;
+  position: number;
+  name: string;
+  state_type: string;
+  order_count: number | null;
+  actions: string[];
 };
 
 // 响应式状态
@@ -176,14 +188,8 @@ const exportStatus = ref<"success" | "error" | "">("");
 const exportMessage = ref("");
 const shopId = ref<number | null>(null);
 
-const orderStateIdMap = {
-  New: 1407795702316,
-  处理中: 1428563163555,
-  生产中: 1428305118910,
-  待确认: 1428305118916,
-  无图: 1428305118926,
-  Completed: 1407795702360,
-};
+// 动态订单状态映射（从 Etsy API 获取）
+const orderStateIdMap = ref<Record<string, number>>({});
 
 // ship_date
 const shipDateMap = {
@@ -205,7 +211,7 @@ const destinationMap = {
 
 // 表单参数对象
 const formParams = ref({
-  orderStateId: orderStateIdMap["待确认"],
+  orderStateId: 0, // 初始值，会在获取到 orderStates 后更新
   limit: 20,
   shipDate: shipDateMap.All,
   destination: destinationMap.All,
@@ -240,8 +246,30 @@ function exportToCSV(orders: Order[], filename: string = "backFillEn"): void {
   }
 }
 
-// 通过 content script 获取 shopId
-async function getShopIdFromContentScript(): Promise<number | null> {
+/**
+ * 将 orderStates 数组转换为 orderStateIdMap 格式
+ * @param orderStates 订单状态数组
+ * @returns Record<string, number> 格式的映射对象
+ */
+function convertOrderStatesToMap(
+  orderStates: OrderState[]
+): Record<string, number> {
+  const map: Record<string, number> = {};
+  if (orderStates && Array.isArray(orderStates)) {
+    orderStates.forEach((state) => {
+      if (state.name && state.order_state_id) {
+        map[state.name] = state.order_state_id;
+      }
+    });
+  }
+  return map;
+}
+
+// 通过 content script 获取 shopId 和 orderStates
+async function getShopIdFromContentScript(): Promise<{
+  shopId: number | null;
+  orderStates: OrderState[] | null;
+}> {
   try {
     // 获取当前活动标签页
     const tabs = await browser.tabs.query({
@@ -251,23 +279,47 @@ async function getShopIdFromContentScript(): Promise<number | null> {
 
     if (tabs.length === 0 || !tabs[0].id) {
       console.warn("未找到活动标签页");
-      return null;
+      return { shopId: null, orderStates: null };
     }
 
     const tabId = tabs[0].id;
 
-    // 直接发送消息到 content script 获取 shopId
-    // 让 content script 来判断是否在 Etsy 页面以及 shopId 是否存在
+    // 直接发送消息到 content script 获取 Etsy 数据
+    // 让 content script 来判断是否在 Etsy 页面以及数据是否存在
     const response = await browser.tabs.sendMessage(tabId, {
       type: "GET_SHOP_ID",
     });
 
-    if (response?.success && response?.shopId) {
+    if (response?.success && response?.shopId !== undefined) {
       console.log("✅ 成功获取 shopId:", response.shopId);
-      return response.shopId;
+      console.log("✅ 成功获取 orderStates:", response.orderStates);
+
+      // 更新 orderStateIdMap
+      if (response.orderStates) {
+        const newMap = convertOrderStatesToMap(response.orderStates);
+        orderStateIdMap.value = newMap;
+        console.log("✅ 已更新 orderStateIdMap:", newMap);
+
+        // 如果 formParams.orderStateId 还是初始值 0，则设置为第一个订单状态
+        if (
+          formParams.value.orderStateId === 0 &&
+          response.orderStates &&
+          response.orderStates.length > 0
+        ) {
+          const firstStateId = Object.values(newMap)[0];
+          if (firstStateId) {
+            formParams.value.orderStateId = firstStateId;
+          }
+        }
+      }
+
+      return {
+        shopId: response.shopId,
+        orderStates: response.orderStates || null,
+      };
     } else {
-      console.warn("⚠️ 获取 shopId 失败:", response?.error || "未知错误");
-      return null;
+      console.warn("⚠️ 获取 Etsy 数据失败:", response?.error || "未知错误");
+      return { shopId: null, orderStates: null };
     }
   } catch (error) {
     // 处理 content script 未注入的情况
@@ -277,9 +329,9 @@ async function getShopIdFromContentScript(): Promise<number | null> {
     ) {
       console.error("Content script 未注入，可能需要刷新页面");
     } else {
-      console.error("获取 shopId 时发生错误:", error);
+      console.error("获取 Etsy 数据时发生错误:", error);
     }
-    return null;
+    return { shopId: null, orderStates: null };
   }
 }
 
@@ -352,8 +404,9 @@ async function fetchAndExportOrders() {
   exportMessage.value = "";
 
   try {
-    // 通过 content script 获取 shopId
-    const currentShopId = await getShopIdFromContentScript();
+    // 通过 content script 获取 shopId 和 orderStates
+    const { shopId: currentShopId, orderStates } =
+      await getShopIdFromContentScript();
 
     if (!currentShopId) {
       exportStatus.value = "error";
@@ -481,6 +534,21 @@ async function fetchAndExportOrders() {
     isLoading.value = false;
   }
 }
+
+// 组件挂载时自动获取订单状态
+onMounted(async () => {
+  try {
+    const { shopId: currentShopId, orderStates } =
+      await getShopIdFromContentScript();
+    if (currentShopId && orderStates) {
+      shopId.value = currentShopId;
+      console.log("✅ 组件挂载时已获取订单状态");
+    }
+  } catch (error) {
+    console.warn("⚠️ 组件挂载时获取订单状态失败:", error);
+    // 不显示错误，因为用户可能还没有打开 Etsy 页面
+  }
+});
 </script>
 
 <style scoped>
