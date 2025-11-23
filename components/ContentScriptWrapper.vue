@@ -1,12 +1,12 @@
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted } from 'vue';
-import FileUploadWidget from './FileUploadWidget.vue';
+import { ref, onMounted, onUnmounted } from "vue";
+import FileUploadWidget from "./FileUploadWidget.vue";
 
 const shouldShowWidget = ref(false);
 let observer: MutationObserver | null = null;
 
 const checkElement = () => {
-  const targetElement = document.getElementById('mark-as-complete-overlay');
+  const targetElement = document.getElementById("mark-as-complete-overlay");
   // 根据元素是否存在来更新显示状态
   shouldShowWidget.value = targetElement !== null;
 };
@@ -39,4 +39,3 @@ onUnmounted(() => {
 <template>
   <FileUploadWidget v-if="shouldShowWidget" />
 </template>
-
