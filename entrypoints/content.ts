@@ -2,12 +2,65 @@ import { createApp } from "vue";
 import ContentScriptWrapper from "@/components/ContentScriptWrapper.vue";
 
 /**
+ * 脚本注入状态管理
+ * 用于跟踪已注入的脚本，避免重复注入
+ */
+const scriptInjectionState = {
+  pageInject: {
+    injected: false,
+    promise: null as Promise<void> | null,
+  },
+};
+
+/**
  * 注入脚本到页面主世界
  * @param scriptPath 脚本路径
+ * @returns Promise<void>
  */
 function injectScript(scriptPath: string): Promise<void> {
+  // 如果是 page-inject.js，使用状态管理
+  if (scriptPath === "page-inject.js") {
+    // 如果已经注入，返回已存在的 Promise
+    if (scriptInjectionState.pageInject.injected && scriptInjectionState.pageInject.promise) {
+      return scriptInjectionState.pageInject.promise;
+    }
+
+    // 检查脚本是否已经注入（通过 DOM）
+    const scriptId = `injected-script-${scriptPath}`;
+    if (document.getElementById(scriptId)) {
+      console.log(`✅ [隔离世界] 脚本 ${scriptPath} 已存在，跳过注入`);
+      scriptInjectionState.pageInject.injected = true;
+      const resolvedPromise = Promise.resolve();
+      scriptInjectionState.pageInject.promise = resolvedPromise;
+      return resolvedPromise;
+    }
+
+    // 创建新的注入 Promise
+    const injectionPromise = new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.id = scriptId;
+      script.src = browser.runtime.getURL(scriptPath as any);
+      script.onload = function () {
+        console.log(`✅ [隔离世界] 脚本 ${scriptPath} 注入成功`);
+        scriptInjectionState.pageInject.injected = true;
+        resolve();
+      };
+      script.onerror = function () {
+        console.error(`❌ [隔离世界] 脚本 ${scriptPath} 注入失败`);
+        scriptInjectionState.pageInject.injected = false;
+        scriptInjectionState.pageInject.promise = null;
+        reject(new Error(`脚本 ${scriptPath} 注入失败`));
+      };
+      (document.head || document.documentElement).appendChild(script);
+    });
+
+    // 保存 Promise 到状态
+    scriptInjectionState.pageInject.promise = injectionPromise;
+    return injectionPromise;
+  }
+
+  // 其他脚本的注入逻辑（保持向后兼容）
   return new Promise((resolve, reject) => {
-    // 检查脚本是否已经注入
     const scriptId = `injected-script-${scriptPath}`;
     if (document.getElementById(scriptId)) {
       console.log(`✅ [隔离世界] 脚本 ${scriptPath} 已存在，跳过注入`);
@@ -28,6 +81,25 @@ function injectScript(scriptPath: string): Promise<void> {
     };
     (document.head || document.documentElement).appendChild(script);
   });
+}
+
+/**
+ * 初始化脚本注入
+ * 在 content script 启动时立即注入必要的脚本
+ */
+async function initializeScriptInjection(): Promise<void> {
+  try {
+    // 注入 page-inject.js 到主世界
+    // 这个脚本提供以下功能：
+    // 1. 获取 Etsy 数据（get-etsy-data）
+    // 2. 修改 select 选项（change-select-option）
+    // 3. 修改 input 值（change-input-value）
+    await injectScript("page-inject.js");
+    console.log("✅ [隔离世界] 脚本注入初始化完成");
+  } catch (error) {
+    console.error("❌ [隔离世界] 脚本注入初始化失败:", error);
+    // 不抛出错误，允许后续功能降级处理
+  }
 }
 
 // 订单状态类型定义
@@ -54,7 +126,7 @@ function getEtsyDataFromMainWorld(): Promise<{
 }> {
   return new Promise(async (resolve, reject) => {
     try {
-      // 确保注入脚本已加载
+      // 确保注入脚本已加载（使用状态管理，避免重复注入）
       await injectScript("page-inject.js");
 
       // 生成唯一的请求 ID
@@ -117,10 +189,13 @@ function getEtsyDataFromMainWorld(): Promise<{
 }
 
 export default defineContentScript({
-  matches: ["*://*/*"],
-  runAt: "document_end",
+  matches: ["*://*.etsy.com/*"],
+  runAt: "document_start",
   registration: "manifest",
-  main() {
+  async main() {
+    // 初始化脚本注入（在启动时立即注入 page-inject.js）
+    await initializeScriptInjection();
+
     // 监听来自 popup 的消息，返回当前页面的 cookie 或 shopId
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log(

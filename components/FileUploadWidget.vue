@@ -141,8 +141,9 @@ const parseCSV = (csvText: string) => {
 
 /**
  * 填充表单字段（直接尝试，找不到就跳过）
+ * 注意：page-inject.js 已在 content.ts 初始化时注入，无需重复注入
  */
-const fillFormFields = (orderData: OrderData[]) => {
+const fillFormFields = async (orderData: OrderData[]) => {
   isProcessing.value = true;
   matchedOrders.value = [];
   matchCount.value = 0;
@@ -162,16 +163,14 @@ const fillFormFields = (orderData: OrderData[]) => {
 
     try {
       // 构建选择器
-      const selectSelector = `select[name="carrierNameSelect-${orderNumber}"]`;
       const inputSelector = `input[name="trackingCode-${orderNumber}"]`;
 
-      // 直接尝试修改，如果找不到元素会返回 false
-      const selectSuccess = changeSelectOption(
-        selectSelector,
-        shippingCarrier,
-        "both"
+      // 使用 await 等待 Promise 结果
+      const selectSuccess = await changeSelectOption(
+        orderNumber,
+        shippingCarrier
       );
-      const inputSuccess = changeInputValue(inputSelector, trackingNumber, true);
+      const inputSuccess = await changeInputValue(inputSelector, trackingNumber, true);
 
       // 只要两个都成功才算匹配成功
       if (selectSuccess && inputSuccess) {
