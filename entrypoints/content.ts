@@ -1,4 +1,5 @@
 import { createApp } from "vue";
+import JSZip from "jszip";
 import ContentScriptWrapper from "@/components/ContentScriptWrapper.vue";
 
 /**
@@ -232,6 +233,152 @@ export default defineContentScript({
             });
           });
         return true; // 保持消息通道开放，用于异步响应
+      }
+
+      if (message.type === "GET_MSG_LIST_IMAGES") {
+        try {
+          const container =
+            document.querySelector("#msg-list-container") ??
+            document.querySelector(".msg-list-container");
+
+          if (!container) {
+            sendResponse({
+              success: false,
+              error: "未找到 msg-list-container，请确保在聊天页面打开",
+            });
+            return true;
+          }
+
+          const links = container.querySelectorAll("a");
+          const urlSet = new Set<string>();
+          links.forEach((a) => {
+            const href = (a.getAttribute("href") ?? a.href)?.trim();
+            if (href) urlSet.add(href);
+          });
+          const urls = Array.from(urlSet);
+
+          sendResponse({ success: true, urls });
+        } catch (error) {
+          console.error("获取聊天图片链接失败:", error);
+          sendResponse({
+            success: false,
+            error: error instanceof Error ? error.message : "未知错误",
+          });
+        }
+        return true;
+      }
+
+      if (message.type === "GET_ORDER_NUMBER") {
+        try {
+          const buyerInfo = document.querySelector(".buyer-info");
+          if (!buyerInfo) {
+            sendResponse({
+              success: true,
+              orderNumber: "",
+              error: "未找到 buyer-info 区域",
+            });
+            return true;
+          }
+
+          const listUnstyled = buyerInfo.querySelector(".wt-list-unstyled");
+          if (!listUnstyled) {
+            sendResponse({
+              success: true,
+              orderNumber: "",
+              error: "未找到 wt-list-unstyled",
+            });
+            return true;
+          }
+
+          const truncateEl = listUnstyled.querySelector(".wt-text-truncate");
+          const orderNumber = truncateEl
+            ? (truncateEl.textContent ?? "").trim()
+            : "";
+
+          sendResponse({ success: true, orderNumber });
+        } catch (error) {
+          console.error("获取订单号失败:", error);
+          sendResponse({
+            success: false,
+            orderNumber: "",
+            error: error instanceof Error ? error.message : "未知错误",
+          });
+        }
+        return true;
+      }
+
+      if (message.type === "DOWNLOAD_IMAGES_AS_ZIP") {
+        const { urls, orderNumber } = message as {
+          urls: string[];
+          orderNumber: string;
+        };
+        if (!urls?.length) {
+          sendResponse({ success: false, error: "没有选中图片" });
+          return true;
+        }
+
+        (async () => {
+          try {
+            await injectScript("page-inject.js");
+            const requestId = `fetch-images-zip-${Date.now()}-${Math.random()}`;
+
+            const imagesBase64 = await new Promise<string[]>((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                window.removeEventListener("message", handleResponse);
+                reject(new Error("主世界拉取图片超时"));
+              }, 60000);
+
+              function handleResponse(event: MessageEvent) {
+                if (event.source !== window) return;
+                const data = event.data;
+                if (
+                  data?.type === "fetch-images-for-zip-response" &&
+                  data.requestId === requestId
+                ) {
+                  clearTimeout(timeout);
+                  window.removeEventListener("message", handleResponse);
+                  if (data.success && Array.isArray(data.images)) {
+                    resolve(data.images);
+                  } else {
+                    reject(new Error(data?.error ?? "拉取图片失败"));
+                  }
+                }
+              }
+
+              window.addEventListener("message", handleResponse);
+              window.postMessage(
+                { type: "fetch-images-for-zip", urls, requestId },
+                "*"
+              );
+            });
+
+            function getExt(url: string): string {
+              try {
+                const pathname = new URL(url, "https://x").pathname;
+                const m = pathname.match(/\.(jpe?g|png|gif|webp|bmp)(\?|$)/i);
+                return m ? m[1].toLowerCase() : "jpg";
+              } catch {
+                return "jpg";
+              }
+            }
+
+            const zip = new JSZip();
+            for (let i = 0; i < imagesBase64.length; i++) {
+              const ext = getExt(urls[i]);
+              zip.file(`image_${i + 1}.${ext}`, imagesBase64[i], { base64: true });
+            }
+            const zipBase64 = await zip.generateAsync({ type: "base64" });
+            const filename =
+              (orderNumber || "images").replace(/[/\\?*:|"]/g, "_") + ".zip";
+            sendResponse({ success: true, zipBase64, filename });
+          } catch (err) {
+            sendResponse({
+              success: false,
+              error: err instanceof Error ? err.message : "打包失败",
+            });
+          }
+        })();
+        return true;
       }
     });
 

@@ -172,6 +172,53 @@
         "*"
       );
     }
+
+    // 在主世界拉取图片（绕过 CORS），返回 base64 数组
+    if (event.data && event.data.type === "fetch-images-for-zip") {
+      const { urls, requestId } = event.data;
+      (function () {
+        function arrayBufferToBase64(buffer) {
+          const bytes = new Uint8Array(buffer);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          return btoa(binary);
+        }
+        Promise.all(
+          (urls || []).map(function (url) {
+            return fetch(url)
+              .then(function (res) {
+                if (!res.ok) throw new Error("fetch " + res.status);
+                return res.arrayBuffer();
+              })
+              .then(arrayBufferToBase64);
+          })
+        )
+          .then(function (images) {
+            window.postMessage(
+              {
+                type: "fetch-images-for-zip-response",
+                requestId: requestId,
+                success: true,
+                images: images,
+              },
+              "*"
+            );
+          })
+          .catch(function (err) {
+            window.postMessage(
+              {
+                type: "fetch-images-for-zip-response",
+                requestId: requestId,
+                success: false,
+                error: err && err.message ? err.message : "拉取图片失败",
+              },
+              "*"
+            );
+          });
+      })();
+    }
   });
 
   console.log("✅ [主世界] page-inject.js 已加载，可以访问 window.Etsy 对象和 DOM 操作");
