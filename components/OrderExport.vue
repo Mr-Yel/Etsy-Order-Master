@@ -156,23 +156,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { CSV_HEADERS, buildCSVContent, downloadCSV } from "@/utils/csv-utils";
+import {
+  convertOrderStatesToMap,
+  type OrderState,
+} from "@/composables/useOrderStates";
+import { fetchOrderList } from "@/composables/useFetchOrderList";
 
 // 订单类型定义
 type Order = {
   order_id: number;
   [key: string]: any;
-};
-
-// 订单状态类型定义
-type OrderState = {
-  type: string;
-  order_state_id: number;
-  client_id: number | null;
-  position: number;
-  name: string;
-  state_type: string;
-  order_count: number | null;
-  actions: string[];
 };
 
 // 响应式状态
@@ -232,20 +225,6 @@ function exportToCSV(orders: Order[], filename: string = "backFillEn"): void {
     console.error("❌ CSV 导出失败:", error);
     throw error;
   }
-}
-
-function convertOrderStatesToMap(
-  orderStates: OrderState[]
-): Record<string, number> {
-  const map: Record<string, number> = {};
-  if (orderStates && Array.isArray(orderStates)) {
-    orderStates.forEach((state) => {
-      if (state.name && state.order_state_id) {
-        map[state.name] = state.order_state_id;
-      }
-    });
-  }
-  return map;
 }
 
 async function getShopIdFromContentScript(): Promise<{
@@ -331,51 +310,27 @@ async function getCookiesFromBrowser(): Promise<string | null> {
   }
 }
 
-async function fetchOrdersPage(
-  shopId: number,
-  limit: number,
-  offset: number
-): Promise<Order[]> {
-  const params: Record<string, string> = {
+function buildOrderListBaseParams(): Record<string, string> {
+  const fp = formParams.value;
+  return {
     "filters[buyer_id]": "all",
     "filters[channel]": "all",
     "filters[completed_status]": "all",
     "filters[completed_date]": "all",
-    "filters[destination]": formParams.value.destination,
-    "filters[ship_date]": formParams.value.shipDate,
+    "filters[destination]": fp.destination,
+    "filters[ship_date]": fp.shipDate,
     "filters[shipping_label_eligibility]": "false",
     "filters[shipping_label_status]": "all",
-    "filters[has_buyer_notes]": formParams.value.hasBuyerNotes
-      ? "true"
-      : "false",
-    "filters[is_marked_as_gift]": formParams.value.isMarkedAsGift
-      ? "true"
-      : "false",
-    "filters[is_personalized]": formParams.value.isPersonalized
-      ? "true"
-      : "false",
-    "filters[has_shipping_upgrade]": formParams.value.hasShippingUpgrade
-      ? "true"
-      : "false",
-    "filters[order_state_id]": String(formParams.value.orderStateId),
-    limit: String(limit),
-    offset: String(offset),
+    "filters[has_buyer_notes]": fp.hasBuyerNotes ? "true" : "false",
+    "filters[is_marked_as_gift]": fp.isMarkedAsGift ? "true" : "false",
+    "filters[is_personalized]": fp.isPersonalized ? "true" : "false",
+    "filters[has_shipping_upgrade]": fp.hasShippingUpgrade ? "true" : "false",
+    "filters[order_state_id]": String(fp.orderStateId),
     search_terms: "",
     sort_by: "expected_ship_date",
     sort_order: "asc",
     "objects_enabled_for_normalization[order_state]": "true",
   };
-
-  const baseUrl = `https://www.etsy.com/api/v3/ajax/bespoke/shop/${shopId}/mission-control/orders/data`;
-  const url = baseUrl + "?" + new URLSearchParams(params).toString();
-
-  const response = await fetch(url, { method: "GET" });
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return data?.orders_search?.orders || [];
 }
 
 async function fetchAndExportOrders() {
@@ -398,31 +353,12 @@ async function fetchAndExportOrders() {
     shopId.value = currentShopId;
 
     const requestedLimit = formParams.value.limit;
-    const MAX_LIMIT_PER_REQUEST = 50;
-    const allOrders: Order[] = [];
-    let currentOffset = 0;
-    let remainingLimit = requestedLimit;
-
-    while (remainingLimit > 0) {
-      const currentLimit = Math.min(remainingLimit, MAX_LIMIT_PER_REQUEST);
-      const orders = await fetchOrdersPage(
-        currentShopId,
-        currentLimit,
-        currentOffset
-      );
-      allOrders.push(...orders);
-
-      if (orders.length < currentLimit) break;
-
-      currentOffset += orders.length;
-      remainingLimit -= orders.length;
-      if (allOrders.length >= requestedLimit) break;
-    }
-
-    const finalOrders =
-      allOrders.length > requestedLimit
-        ? allOrders.slice(0, requestedLimit)
-        : allOrders;
+    const baseParams = buildOrderListBaseParams();
+    const { orders: finalOrders } = await fetchOrderList(
+      currentShopId,
+      requestedLimit,
+      baseParams
+    );
 
     orderCount.value = finalOrders.length;
 
@@ -432,7 +368,7 @@ async function fetchAndExportOrders() {
       return;
     }
 
-    exportToCSV(finalOrders, "backFillEn");
+    exportToCSV(finalOrders as Order[], "backFillEn");
     exportStatus.value = "success";
     exportMessage.value = `已成功导出 ${finalOrders.length} 条订单到 CSV 文件`;
   } catch (error) {

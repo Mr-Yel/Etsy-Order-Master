@@ -1,0 +1,242 @@
+/**
+ * 将订单列表接口返回的 orders + buyers 映射为导出表行
+ * 字段与顺序以 etsy-order-api-fields-mapping.md 第一节为准（36 列）
+ */
+export const EXPORT_COLUMNS = [
+  "Sale Date",
+  "Order ID",
+  "Buyer User ID",
+  "Full Name",
+  "First Name",
+  "Last Name",
+  "Number of Items",
+  "Payment Method",
+  "Date Shipped",
+  "Street 1",
+  "Street 2",
+  "Ship City",
+  "Ship State",
+  "Ship Zipcode",
+  "Ship Country",
+  "Currency",
+  "Order Value",
+  "Coupon Code",
+  "Coupon Details",
+  "Discount Amount",
+  "Shipping Discount",
+  "Shipping",
+  "Sales Tax",
+  "Order Total",
+  "Status",
+  "Card Processing Fees",
+  "Order Net",
+  "Adjusted Order Total",
+  "Adjusted Card Processing Fees",
+  "Adjusted Net Order Amount",
+  "Buyer",
+  "Order Type",
+  "Payment Type",
+  "InPerson Discount",
+  "InPerson Location",
+  "SKU",
+] as const;
+
+export type ExportTableRow = Record<(typeof EXPORT_COLUMNS)[number], string>;
+
+type RawOrder = {
+  order_id: number;
+  order_date?: number;
+  buyer_id?: number;
+  fulfillment?: {
+    to_address?: {
+      name?: string;
+      first_line?: string;
+      second_line?: string;
+      city?: string;
+      state?: string;
+      zip?: string;
+      country?: string;
+    };
+  };
+  payment?: {
+    payment_method?: string;
+    is_in_person_payment?: boolean;
+    cost_breakdown?: {
+      items_cost?: { value?: number; currency_code?: string };
+      total_cost?: { value?: number; currency_code?: string };
+      discount?: { value?: number };
+      shipping_discount?: { value?: number };
+      shipping_cost?: { value?: number };
+      tax_cost?: { value?: number };
+      adjusted_total_cost?: { value?: number };
+    };
+    sellermarketing_coupons?: Array<{ code?: string; percentage?: number }>;
+  };
+  transactions?: Array<{
+    quantity?: number;
+    product?: { product_identifier?: string };
+  }>;
+  [key: string]: unknown;
+};
+
+type RawBuyer = {
+  buyer_id?: number;
+  username?: string;
+  name?: string;
+  [key: string]: unknown;
+};
+
+/** 销售日期：Unix 时间戳（秒）按 UTC → MM/DD/YY，避免本地时区导致日期偏移 */
+function formatSaleDate(ts: number | undefined): string {
+  if (ts == null) return "";
+  const d = new Date(ts * 1000);
+  const y = d.getUTCFullYear().toString().slice(-2);
+  const m = (d.getUTCMonth() + 1).toString().padStart(2, "0");
+  const day = d.getUTCDate().toString().padStart(2, "0");
+  return `${m}/${day}/${y}`;
+}
+
+function safeStr(v: unknown): string {
+  if (v == null) return "";
+  return String(v);
+}
+
+/** 从收货人全名拆出 First / Last（首段为 First，其余为 Last） */
+function splitName(fullName: string): { first: string; last: string } {
+  const t = fullName.trim().split(/\s+/);
+  if (t.length === 0) return { first: "", last: "" };
+  if (t.length === 1) return { first: t[0], last: "" };
+  return { first: t[0], last: t.slice(1).join(" ") };
+}
+
+/** payment_method → Payment Type，如 online_cc */
+function toPaymentType(method: string | undefined, isInPerson: boolean): string {
+  if (isInPerson) return "in_person";
+  const m = (method ?? "").toLowerCase();
+  if (m === "cc" || m === "apple_pay") return "online_cc";
+  if (m === "dc_paypal" || m === "paypal") return "online_paypal";
+  return m ? `online_${m}` : "online_cc";
+}
+
+/** 优惠券详情：如 15 → "15% off"，无则 "% off" */
+function formatCouponDetails(percentage: number | undefined): string {
+  if (percentage != null && percentage > 0) return `${percentage}% off`;
+  return "% off";
+}
+
+/** 金额（分→元，保留两位） */
+function formatCents(value: number | undefined): string {
+  if (value == null) return "";
+  if (value === 0) return "0";
+  return (value / 100).toFixed(2);
+}
+
+/** Card Processing Fees：processing_fee 为负数，取绝对值后 amount/divisor */
+function formatProcessingFee(fee: ProcessingFeeFromDetail | undefined): string {
+  if (fee?.divisor == null || fee.divisor === 0) return "";
+  const amount = fee.amount ?? 0;
+  return (Math.abs(amount) / fee.divisor).toFixed(2);
+}
+
+/** 收益明细接口返回中 fees_and_credits_details.processing_fee 结构（用于 Card Processing Fees） */
+export type ProcessingFeeFromDetail = {
+  amount?: number;
+  divisor?: number;
+  currency_code?: string;
+  currency_formatted_short?: string;
+};
+
+export type MapOrdersOptions = {
+  /** 订单 ID 前缀，如 SLA/SLB/SLC，默认 SLC */
+  orderIdPrefix?: string;
+  /** 按 order_id 的收益明细（含 processing_fee），用于填充 Card Processing Fees */
+  earningsByOrderId?: Record<number, { fees_and_credits_details?: { processing_fee?: ProcessingFeeFromDetail } }>;
+};
+
+export function mapOrdersToTableRows(
+  orders: RawOrder[],
+  buyers: RawBuyer[],
+  options: MapOrdersOptions = {}
+): ExportTableRow[] {
+  const { orderIdPrefix = "SLC", earningsByOrderId } = options;
+  const buyerMap = new Map<number, RawBuyer>();
+  buyers.forEach((b) => {
+    if (b.buyer_id != null) buyerMap.set(b.buyer_id, b);
+  });
+
+  return orders.map((order) => {
+    const buyer =
+      order.buyer_id != null ? buyerMap.get(order.buyer_id) : undefined;
+    const addr = order.fulfillment?.to_address;
+    const fullName = addr?.name ?? "";
+    const { first: firstName, last: lastName } = splitName(fullName);
+    const cost = order.payment?.cost_breakdown;
+    const coupons = order.payment?.sellermarketing_coupons ?? [];
+    const firstCoupon = coupons[0];
+    const transactionCount = Math.max(1, order.transactions?.length ?? 1);
+    const couponCodeRaw = firstCoupon?.code ?? "";
+    const couponDetailsRaw = "% off";
+    const couponCode = Array(transactionCount).fill(couponCodeRaw).join(";");
+    const couponDetails = Array(transactionCount).fill(couponDetailsRaw).join(";");
+
+    const numItems =
+      order.transactions?.reduce((s, t) => s + (t.quantity ?? 0), 0) ?? 0;
+    const skus =
+      order.transactions
+        ?.map((t) => t.product?.product_identifier)
+        .filter(Boolean)
+        .join(", ") ?? "";
+
+    // const isInPerson = order.payment?.is_in_person_payment ?? false;
+    // const paymentType = toPaymentType(
+    //   order.payment?.payment_method,
+    //   isInPerson
+    // );
+
+    const earnings = order.order_id != null ? earningsByOrderId?.[order.order_id] : undefined;
+    const cardProcessingFees = formatProcessingFee(earnings?.fees_and_credits_details?.processing_fee);
+
+    return {
+      "Sale Date": formatSaleDate(order.order_date),
+      "Order ID": `${orderIdPrefix}${order.order_id}`,
+      "Buyer User ID": safeStr(buyer?.username),
+      "Full Name": fullName,
+      "First Name": firstName,
+      "Last Name": lastName,
+      "Number of Items": String(numItems),
+      "Payment Method": "Credit Card",
+      "Date Shipped": "",
+      "Street 1": safeStr(addr?.first_line),
+      "Street 2": safeStr(addr?.second_line),
+      "Ship City": safeStr(addr?.city),
+      "Ship State": safeStr(addr?.state),
+      "Ship Zipcode": safeStr(addr?.zip),
+      "Ship Country": safeStr(addr?.country),
+      Currency: cost?.total_cost?.currency_code ?? cost?.items_cost?.currency_code ?? "",
+      "Order Value": formatCents(cost?.items_cost?.value),
+      "Coupon Code": couponCode,
+      "Coupon Details": couponDetails,
+      "Discount Amount": formatCents(cost?.discount?.value),
+      "Shipping Discount": formatCents(cost?.shipping_discount?.value),
+      Shipping: formatCents(cost?.shipping_cost?.value),
+      // "Sales Tax": formatCents(cost?.tax_cost?.value),
+      "Sales Tax": "0",
+      "Order Total": formatCents(cost?.total_cost?.value),
+      Status: "",
+      "Card Processing Fees": cardProcessingFees,
+      "Order Net": "暂时无法获取",
+      "Adjusted Order Total": "0",
+      "Adjusted Card Processing Fees": "0",
+      "Adjusted Net Order Amount": "0",
+      Buyer: fullName,
+      "Order Type": "online",
+      // Payment Type 版本一：使用 toPaymentType(payment_method, is_in_person)
+      // "Payment Type": toPaymentType(order.payment?.payment_method, order.payment?.is_in_person_payment ?? false),
+      // Payment Type 版本二（当前导出）：统一写为 online_cc
+      "Payment Type": "online_cc",
+      "InPerson Discount": "",
+      "InPerson Location": "",
+      SKU: skus,
+    };
+  });
+}
