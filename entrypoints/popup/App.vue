@@ -2,39 +2,88 @@
   <div class="popup-container">
     <div class="header">
       <h1 class="title">Etsy Order Master</h1>
-      <div class="tabs">
-        <button
-          type="button"
-          :class="['tab', { active: activeTab === 'order' }]"
-          @click="activeTab = 'order'"
-        >
-          订单导出
-        </button>
-        <button
-          type="button"
-          :class="['tab', { active: activeTab === 'image' }]"
-          @click="activeTab = 'image'"
-        >
-          图片下载
-        </button>
-      </div>
+      <button class="login-link" type="button" @click="openLoginPage">
+        {{ isLoggedIn ? "账号管理" : "去登录" }}
+      </button>
+    </div>
+
+    <div v-if="isLoggedIn" class="tabs">
+      <button
+        type="button"
+        :class="['tab', { active: activeTab === 'order' }]"
+        @click="activeTab = 'order'"
+      >
+        订单导出
+      </button>
+      <button
+        type="button"
+        :class="['tab', { active: activeTab === 'image' }]"
+        @click="activeTab = 'image'"
+      >
+        图片下载
+      </button>
     </div>
 
     <div class="content">
-      <OrderExport v-show="activeTab === 'order'" />
-      <ImageDownload v-show="activeTab === 'image'" />
+      <div v-if="!isLoggedIn" class="login-hint">
+        <h2 class="login-hint-title">登录后使用插件功能</h2>
+        <p class="login-hint-desc">
+          使用订单导出和图片下载功能前，请先完成账号登录。
+        </p>
+      </div>
+
+      <template v-else>
+        <OrderExport v-show="activeTab === 'order'" />
+        <ImageDownload v-show="activeTab === 'image'" />
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import OrderExport from "@/components/OrderExport.vue";
 import ImageDownload from "@/components/ImageDownload.vue";
 
 type TabId = "order" | "image";
 
+type StoredUser = {
+  id?: string;
+  name?: string;
+  email?: string;
+};
+
+const STORAGE_KEY = "eomUser";
+
 const activeTab = ref<TabId>("order");
+const isLoggedIn = ref(false);
+const user = ref<StoredUser | null>(null);
+
+const loadAuthFromStorage = async () => {
+  try {
+    const result = await browser.storage.local.get(STORAGE_KEY);
+    const stored = result[STORAGE_KEY] as StoredUser | undefined;
+
+    if (stored) {
+      user.value = stored;
+      isLoggedIn.value = true;
+    } else {
+      user.value = null;
+      isLoggedIn.value = false;
+    }
+  } catch {
+    user.value = null;
+    isLoggedIn.value = false;
+  }
+};
+
+onMounted(() => {
+  void loadAuthFromStorage();
+});
+
+const openLoginPage = () => {
+  browser.runtime.sendMessage({ type: "OPEN_LOGIN_PAGE" });
+};
 </script>
 
 <style scoped>
@@ -48,6 +97,9 @@ const activeTab = ref<TabId>("order");
 .header {
   padding: 12px;
   padding-bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .title {
@@ -61,6 +113,22 @@ const activeTab = ref<TabId>("order");
   display: flex;
   gap: 0;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.login-link {
+  margin-left: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 9999px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  color: #4b5563;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.login-link:hover {
+  background: #f3f4f6;
 }
 
 .tab {
@@ -87,5 +155,40 @@ const activeTab = ref<TabId>("order");
 
 .content {
   padding: 12px;
+}
+
+.login-hint {
+  padding: 16px 12px 20px;
+  border-radius: 10px;
+  background: #f9fafb;
+  border: 1px dashed #d1d5db;
+  text-align: left;
+}
+
+.login-hint-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.login-hint-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.login-hint-button {
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 9999px;
+  border: none;
+  background: #3b82f6;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.login-hint-button:hover {
+  background: #2563eb;
 }
 </style>
