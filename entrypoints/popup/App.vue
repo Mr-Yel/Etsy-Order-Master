@@ -26,10 +26,7 @@
 
     <div class="content">
       <div v-if="!isLoggedIn" class="login-hint">
-        <h2 class="login-hint-title">登录后使用插件功能</h2>
-        <p class="login-hint-desc">
-          使用订单导出和图片下载功能前，请先完成账号登录。
-        </p>
+        <h2 class="login-hint-title">请登录后使用插件</h2>
       </div>
 
       <template v-else>
@@ -81,8 +78,25 @@ onMounted(() => {
   void loadAuthFromStorage();
 });
 
-const openLoginPage = () => {
-  browser.runtime.sendMessage({ type: "OPEN_LOGIN_PAGE" });
+const LOGIN_URL = browser.runtime.getURL("/login.html");
+
+const openLoginPage = async () => {
+  try {
+    const tabs = await browser.tabs.query({ url: LOGIN_URL });
+    if (tabs.length > 0) {
+      const targetTab = tabs[0];
+      if (targetTab.id != null) {
+        await browser.tabs.update(targetTab.id, { active: true });
+      }
+      if (targetTab.windowId != null) {
+        await browser.windows.update(targetTab.windowId, { focused: true });
+      }
+    } else {
+      await browser.tabs.create({ url: LOGIN_URL });
+    }
+  } catch (error) {
+    console.error("openLoginPage error:", error);
+  }
 };
 </script>
 
