@@ -15,6 +15,7 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "jsencrypt": "^3.5.4",
     "jszip": "^3.10.1",
     "papaparse": "^5.5.3",
     "vue": "^3.5.21",

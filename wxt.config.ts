@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: {
     // 权限配置
     permissions: ['storage', 'tabs'],
-    host_permissions: ['*://*.etsy.com/*'],
+    host_permissions: ['*://*.etsy.com/*', 'https://kstgl.kesiteng.cn/*'],
     
     // Web 可访问资源
     web_accessible_resources: [
