@@ -26,6 +26,8 @@ export default defineBackground(() => {
           method: req.method,
           query: req.query,
           body: req.body,
+          formFile: req.formFile,
+          formFields: req.formFields,
           token: req.token,
         })
           .then((data) => sendResponse({ success: true as const, data }))

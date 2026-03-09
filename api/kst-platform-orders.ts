@@ -185,3 +185,94 @@ export async function fetchPlatformOrdersListViaProxy(
   }
   return data;
 }
+
+/** 平台订单导入 JSON/Excel 请求参数 */
+export type PlatformOrdersImportJsonParams = {
+  file: File;
+  shopId: string;
+  platformType: string;
+};
+
+/** 平台订单导入接口响应（与列表接口一致：code、msg） */
+export type PlatformOrdersImportJsonResponse = {
+  code: number;
+  msg: string;
+  [key: string]: unknown;
+};
+
+/** 平台订单导入接口 path */
+export const PLATFORM_ORDERS_IMPORT_JSON_PATH = "/system/platform-orders/import-json";
+
+/**
+ * 直接调用 KST 平台订单导入接口（multipart/form-data：file、shopId、platformType）
+ * 仅在无 CORS 限制的环境使用（如 background / 同源页）
+ */
+export async function fetchPlatformOrdersImportJson(
+  params: PlatformOrdersImportJsonParams,
+  token: string
+): Promise<PlatformOrdersImportJsonResponse> {
+  const formData = new FormData();
+  formData.append("file", params.file, params.file.name);
+  formData.append("shopId", params.shopId);
+  formData.append("platformType", params.platformType);
+
+  const url = `${PLATFORM_ORDERS_BASE}${PLATFORM_ORDERS_IMPORT_JSON_PATH}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+    credentials: "include",
+  });
+  const data = (await res.json()) as PlatformOrdersImportJsonResponse;
+  if (data?.code !== 200) {
+    const msg = data?.msg ?? `请求失败: ${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/** 将 File 转为 base64 字符串 */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.includes(",") ? result.slice(result.indexOf(",") + 1) : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * 通过 background 代理调用 KST 平台订单导入接口（用于 content script 等易触发 CORS 的环境）
+ */
+export async function fetchPlatformOrdersImportJsonViaProxy(
+  params: PlatformOrdersImportJsonParams,
+  token: string
+): Promise<PlatformOrdersImportJsonResponse> {
+  const base64 = await fileToBase64(params.file);
+  const data = await sendKstProxyRequest<PlatformOrdersImportJsonResponse>({
+    path: PLATFORM_ORDERS_IMPORT_JSON_PATH,
+    method: "POST",
+    formFile: {
+      base64,
+      fileName: params.file.name,
+      mimeType: params.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
+    formFields: {
+      shopId: params.shopId,
+      platformType: params.platformType,
+    },
+    token,
+  });
+  if (data?.code !== 200) {
+    const msg = data?.msg ?? "请求失败";
+    throw new Error(msg);
+  }
+  return data;
+}
