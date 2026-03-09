@@ -787,7 +787,6 @@ export default defineContentScript({
           console.error("ContentScript 包装组件挂载失败:", error);
         }
       } else {
-        // 如果 body 还不存在，等待一下再试
         setTimeout(init, 100);
       }
     };
@@ -796,7 +795,6 @@ export default defineContentScript({
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", init);
     } else {
-      // DOM 已经加载完成
       init();
     }
   },

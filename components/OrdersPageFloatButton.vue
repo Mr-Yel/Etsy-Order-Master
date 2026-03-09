@@ -14,28 +14,69 @@ const closeModal = () => {
   showModal.value = false;
 };
 
-onMounted(() => {
-  // 找到包含 “Select Items / Update progress / More actions” 的工具条容器
-  const toolbar = document.querySelector<
-    HTMLDivElement
-  >(
-    ".wt-mt-xs-2.wt-ml-xs-2.wt-mr-xs-2.wt-mt-md-3.wt-mm-md-3.wt-ml-md-0.wt-mr-md-0"
-  );
+const TOOLBAR_SELECTOR =
+  ".wt-mt-xs-2.wt-ml-xs-2.wt-mr-xs-2.wt-mt-md-3.wt-mm-md-3.wt-ml-md-0.wt-mr-md-0";
 
-  if (!toolbar) return;
+const MAX_WAIT_MS = 15000; // 最多等待 15 秒
 
-  // 在 “More actions” 所在的 dropdown-group 之后插入一个容器
+function attachToToolbar(toolbar: HTMLDivElement) {
+  if (injectedContainer) return;
   const container = document.createElement("div");
   container.id = "etsy-order-master-export-btn-container";
   container.className = "dropdown-group etsy-order-master-export-group";
-
   toolbar.appendChild(container);
-
   injectedContainer = container;
   targetEl.value = container;
+}
+
+let observer: MutationObserver | null = null;
+let waitTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+onMounted(() => {
+  const toolbar = document.querySelector<HTMLDivElement>(TOOLBAR_SELECTOR);
+
+  if (toolbar) {
+    attachToToolbar(toolbar);
+    return;
+  }
+
+  // 工具栏由 Etsy 异步渲染，在 DOMContentLoaded 时尚未出现，用 MutationObserver 等待
+  const tryFindAndAttach = () => {
+    const el = document.querySelector<HTMLDivElement>(TOOLBAR_SELECTOR);
+    if (el) {
+      attachToToolbar(el);
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      if (waitTimeoutId != null) {
+        clearTimeout(waitTimeoutId);
+        waitTimeoutId = null;
+      }
+    }
+  };
+
+  observer = new MutationObserver(tryFindAndAttach);
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  waitTimeoutId = setTimeout(() => {
+    waitTimeoutId = null;
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+  }, MAX_WAIT_MS);
 });
 
 onUnmounted(() => {
+  if (waitTimeoutId != null) {
+    clearTimeout(waitTimeoutId);
+    waitTimeoutId = null;
+  }
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
   if (injectedContainer && injectedContainer.parentNode) {
     injectedContainer.parentNode.removeChild(injectedContainer);
   }
