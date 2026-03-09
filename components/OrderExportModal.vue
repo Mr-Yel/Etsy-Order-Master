@@ -11,22 +11,11 @@ import {
   mapOrdersToTableRows,
   type ExportTableRow,
 } from "@/utils/orders-mapping";
-import {
-  fetchPlatformOrdersListViaProxy,
-  fetchPlatformOrdersImportJsonViaProxy,
-} from "@/api";
-import { getToken } from "@/lib/auth-manager";
 import * as XLSX from "xlsx";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const loading = ref(true);
-const testLoading = ref(false);
-const importFile = ref<File | null>(null);
-const importShopId = ref("2222");
-const importPlatformType = ref("ETSY");
-const importLoading = ref(false);
-const importError = ref<string | null>(null);
 const error = ref<string | null>(null);
 const rows = ref<ExportTableRow[]>([]);
 const selected = ref<Set<number>>(new Set());
@@ -170,66 +159,6 @@ function close() {
   emit("close");
 }
 
-async function testKstApi() {
-  testLoading.value = true;
-  try {
-    const token = await getToken();
-    if (!token) {
-      alert("请先登录 KST 后再测试");
-      return;
-    }
-    const data = await fetchPlatformOrdersListViaProxy(
-      { pageNum: 1, pageSize: 10, platformOrderIds: "GSU1QH23B000SAG" },
-      token
-    );
-    alert(`KST 接口测试成功\n总数: ${data.total}\ncode: ${data.code}\nmsg: ${data.msg}`);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    alert(`KST 接口测试失败: ${msg}`);
-  } finally {
-    testLoading.value = false;
-  }
-}
-
-const importFileInput = ref<HTMLInputElement | null>(null);
-
-function onImportFileChange(e: Event) {
-  const target = e.target as HTMLInputElement;
-  const file = target.files?.[0];
-  importFile.value = file ?? null;
-  importError.value = null;
-}
-
-async function uploadImportFile() {
-  if (!importFile.value) {
-    importError.value = "请先选择要上传的文件";
-    return;
-  }
-  const token = await getToken();
-  if (!token) {
-    importError.value = "请先登录 KST";
-    return;
-  }
-  importLoading.value = true;
-  importError.value = null;
-  try {
-    const data = await fetchPlatformOrdersImportJsonViaProxy(
-      {
-        file: importFile.value,
-        shopId: importShopId.value.trim(),
-        platformType: importPlatformType.value.trim(),
-      },
-      token
-    );
-    alert(`上传成功\ncode: ${data.code}\nmsg: ${data.msg}`);
-    importFile.value = null;
-    if (importFileInput.value) importFileInput.value.value = "";
-  } catch (e) {
-    importError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    importLoading.value = false;
-  }
-}
 
 onMounted(() => {
   fetchOrders();
@@ -318,57 +247,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="import-section">
-        <h3 class="import-title">订单导入（KST）</h3>
-        <div class="import-row">
-          <label class="import-label">文件</label>
-          <input
-            ref="importFileInput"
-            type="file"
-            accept=".xlsx,.xls,.json"
-            class="import-file-input"
-            @change="onImportFileChange"
-          />
-          <span class="import-file-name">{{ importFile ? importFile.name : "未选择" }}</span>
-        </div>
-        <div class="import-row">
-          <label class="import-label">店铺 ID</label>
-          <input
-            v-model="importShopId"
-            type="text"
-            class="import-text-input"
-            placeholder="2222"
-          />
-        </div>
-        <div class="import-row">
-          <label class="import-label">平台类型</label>
-          <input
-            v-model="importPlatformType"
-            type="text"
-            class="import-text-input"
-            placeholder="ETSY"
-          />
-        </div>
-        <div v-if="importError" class="import-error">{{ importError }}</div>
-        <button
-          type="button"
-          class="btn-import"
-          :disabled="importLoading || !importFile"
-          @click="uploadImportFile"
-        >
-          {{ importLoading ? "上传中…" : "上传到 KST" }}
-        </button>
-      </div>
-
       <div class="modal-footer">
-        <button
-          type="button"
-          class="btn-test"
-          :disabled="testLoading"
-          @click="testKstApi"
-        >
-          {{ testLoading ? "测试中…" : "测试" }}
-        </button>
         <button
           type="button"
           class="btn-export"
@@ -562,105 +441,12 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.import-section {
-  padding: 16px 20px;
-  border-top: 1px solid #e5e7eb;
-  background: #f9fafb;
-}
-
-.import-title {
-  margin: 0 0 12px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.import-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.import-label {
-  flex-shrink: 0;
-  width: 72px;
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.import-file-input {
-  font-size: 13px;
-}
-
-.import-file-name {
-  font-size: 13px;
-  color: #6b7280;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.import-text-input {
-  width: 140px;
-  padding: 6px 10px;
-  font-size: 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-}
-
-.import-error {
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: #dc2626;
-}
-
-.btn-import {
-  padding: 8px 16px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #fff;
-  background: #059669;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.btn-import:hover:not(:disabled) {
-  background: #047857;
-}
-
-.btn-import:disabled {
-  background: #9ca3af;
-  cursor: not-allowed;
-}
-
 .modal-footer {
   padding: 12px 20px;
   border-top: 1px solid #e5e7eb;
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-}
-
-.btn-test {
-  padding: 10px 20px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #3b82f6;
-  background: #fff;
-  border: 1px solid #3b82f6;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.btn-test:hover:not(:disabled) {
-  background: #eff6ff;
-}
-
-.btn-test:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
 }
 
 .btn-export {
