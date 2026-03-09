@@ -14,6 +14,9 @@ stats-*.json
 .wxt
 web-ext.config.ts
 
+# 本地免登录 token（仅开发环境使用，勿提交）
+dev-token.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

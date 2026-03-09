@@ -1,6 +1,8 @@
 /**
  * 登录管理者 — 统一读写 eomUser，对外提供「是否登录 / 取 token / 登录 / 登出 / 打开登录页」
  * 所有与登录状态、token、用户信息相关的读写仅通过本模块，保证单一数据源。
+ *
+ * 本地免登录：构建时若存在 dev-token.txt 会注入 token；有该 token 时直接使用，不读 storage（该文件不提交，仅本地有则生效）。
  */
 import { browser } from "wxt/browser";
 import { getInfo, login as kstLogin } from "@/api";
@@ -8,10 +10,27 @@ import type { StoredUser } from "@/types/auth";
 
 const STORAGE_KEY = "eomUser";
 
+/** 构建时由 dev-token.txt 注入的本地免登录 token（有则用，不区分 dev/build） */
+const getDevToken = (): string | null => {
+  const t = import.meta.env.VITE_EOM_DEV_TOKEN;
+  return typeof t === "string" && t.trim() ? t.trim() : null;
+};
+
 /**
- * 从本地存储读取当前用户信息
+ * 从本地存储读取当前用户信息。若构建时注入了 dev-token，则用该 token 调 getInfo 取真实用户信息返回（仅省去登录步骤，用户信息与正常登录一致）。
  */
 export async function getStoredUser(): Promise<StoredUser | null> {
+  const devToken = getDevToken();
+  if (devToken) {
+    try {
+      const info = await getInfo(devToken);
+      const nickName = info.nickName ?? info.userName ?? "";
+      const deptName = info.dept?.deptName ?? "";
+      return { token: devToken, name: nickName, deptName };
+    } catch {
+      return null;
+    }
+  }
   try {
     const result = await browser.storage.local.get(STORAGE_KEY);
     const stored = result[STORAGE_KEY] as StoredUser | undefined;
@@ -33,6 +52,8 @@ export async function isLoggedIn(): Promise<boolean> {
  * 获取当前 token，未登录时返回 null
  */
 export async function getToken(): Promise<string | null> {
+  const devToken = getDevToken();
+  if (devToken) return devToken;
   const user = await getStoredUser();
   return user?.token ?? null;
 }
