@@ -1,7 +1,12 @@
 <template>
   <div class="popup-container">
     <div class="header">
-      <h1 class="title">Etsy Order Master</h1>
+      <div class="header-left">
+        <h1 class="title">Etsy Order Master</h1>
+        <p v-if="shopId != null" class="shop-id">
+          当前店铺 ID：{{ shopId }}
+        </p>
+      </div>
       <button class="login-link" type="button" @click="openLoginPage">
         {{ isLoggedIn ? "账号管理" : "去登录" }}
       </button>
@@ -38,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import OrderExport from "@/components/OrderExport.vue";
 import ImageDownload from "@/components/ImageDownload.vue";
 import { useAuth } from "@/composables/useAuth";
@@ -47,6 +52,34 @@ type TabId = "order" | "image";
 
 const { isLoggedIn, openLoginPage } = useAuth();
 const activeTab = ref<TabId>("order");
+const shopId = ref<number | null>(null);
+
+const loadShopId = async () => {
+  try {
+    const tabs = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+
+    if (!tabs.length || !tabs[0].id) return;
+
+    const tabId = tabs[0].id;
+    const response = await browser.tabs.sendMessage(tabId, {
+      type: "GET_SHOP_ID",
+    });
+
+    if (response?.success && typeof response.shopId === "number") {
+      shopId.value = response.shopId;
+    }
+  } catch (error) {
+    // 静默失败：在非 Etsy 页面或 content 未注入时不展示店铺 ID
+    console.warn("获取店铺 ID 失败:", error);
+  }
+};
+
+onMounted(() => {
+  void loadShopId();
+});
 </script>
 
 <style scoped>
@@ -65,11 +98,22 @@ const activeTab = ref<TabId>("order");
   justify-content: space-between;
 }
 
+.header-left {
+  display: flex;
+  flex-direction: column;
+}
+
 .title {
   font-size: 18px;
   font-weight: 600;
   color: #1f2937;
-  margin: 0 0 12px 0;
+  margin: 0;
+}
+
+.shop-id {
+  margin: 4px 0 12px;
+  font-size: 11px;
+  color: #6b7280;
 }
 
 .tabs {
