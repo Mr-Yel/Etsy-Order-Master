@@ -10,6 +10,193 @@
   "use strict";
 
   /**
+   * 判断是否为需要拦截的 Etsy move-orders 接口
+   * 例如：
+   * https://www.etsy.com/api/v3/ajax/shop/26833914/mission-control/order-state/move-orders
+   */
+  function shouldInterceptEtsyMoveOrders(url, method) {
+    if (!url) return false;
+    try {
+      var u = new URL(url, window.location.origin);
+      if (u.hostname !== "www.etsy.com") return false;
+      if (!/\/api\/v3\/ajax\/shop\/\d+\/mission-control\/order-state\/move-orders$/.test(u.pathname)) {
+        return false;
+      }
+      var m = (method || "GET").toUpperCase();
+      // 一般为 POST，请求方法不匹配则忽略
+      return m === "POST";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 在主世界劫持 window.fetch，拦截 Etsy move-orders 接口
+   */
+  function patchFetchForEtsyMoveOrders() {
+    if (typeof window.fetch !== "function") return;
+    if (window.__etsyMoveOrdersFetchPatched) return;
+    window.__etsyMoveOrdersFetchPatched = true;
+
+    var originalFetch = window.fetch;
+
+    window.fetch = function (input, init) {
+      var url = typeof input === "string" ? input : (input && input.url);
+      var method = (init && init.method) || (input && input.method) || "GET";
+
+      var needIntercept = shouldInterceptEtsyMoveOrders(url, method);
+      var requestId = needIntercept
+        ? "etsy-move-orders-" + Date.now() + "-" + Math.random()
+        : null;
+
+      var bodyPromise = Promise.resolve(null);
+
+      if (needIntercept) {
+        try {
+          if (typeof Request !== "undefined" && input instanceof Request) {
+            var clonedReq = input.clone();
+            bodyPromise = clonedReq.text()["catch"](function () {
+              return null;
+            });
+          } else if (init && typeof init.body === "string") {
+            bodyPromise = Promise.resolve(init.body);
+          }
+        } catch (e) {
+          bodyPromise = Promise.resolve(null);
+        }
+      }
+
+      return bodyPromise.then(function (requestBodyText) {
+        if (needIntercept) {
+          try {
+            window.postMessage(
+              {
+                type: "etsy-move-orders-request",
+                requestId: requestId,
+                url: url,
+                method: method,
+                body: requestBodyText,
+                source: "page-inject"
+              },
+              "*"
+            );
+          } catch (e) {
+            // 忽略 postMessage 错误
+          }
+        }
+
+        return originalFetch(input, init).then(function (response) {
+          if (!needIntercept) return response;
+
+          try {
+            var clonedResp = response.clone();
+            return clonedResp
+              .text()
+              .then(function (respText) {
+                try {
+                  window.postMessage(
+                    {
+                      type: "etsy-move-orders-response",
+                      requestId: requestId,
+                      url: url,
+                      status: response.status,
+                      ok: response.ok,
+                      body: respText,
+                      source: "page-inject"
+                    },
+                    "*"
+                  );
+                } catch (e) {
+                  // 忽略 postMessage 错误
+                }
+                return response;
+              })["catch"](function () {
+                return response;
+              });
+          } catch (e) {
+            return response;
+          }
+        });
+      });
+    };
+  }
+
+  /**
+   * 在主世界劫持 XMLHttpRequest，拦截 Etsy move-orders 接口
+   */
+  function patchXHRForEtsyMoveOrders() {
+    if (typeof window.XMLHttpRequest !== "function") return;
+    if (window.__etsyMoveOrdersXHRPatched) return;
+    window.__etsyMoveOrdersXHRPatched = true;
+
+    var OriginalXHR = window.XMLHttpRequest;
+
+    function PatchedXHR() {
+      var xhr = new OriginalXHR();
+      var _url = "";
+      var _method = "GET";
+
+      var originalOpen = xhr.open;
+      xhr.open = function (method, url, async, user, password) {
+        _method = method;
+        _url = url;
+        return originalOpen.apply(xhr, arguments);
+      };
+
+      var originalSend = xhr.send;
+      xhr.send = function (body) {
+        var needIntercept = shouldInterceptEtsyMoveOrders(_url, _method);
+        var requestId = needIntercept
+          ? "etsy-move-orders-xhr-" + Date.now() + "-" + Math.random()
+          : null;
+
+        if (needIntercept) {
+          try {
+            window.postMessage(
+              {
+                type: "etsy-move-orders-request",
+                requestId: requestId,
+                url: _url,
+                method: _method,
+                body: typeof body === "string" ? body : null,
+                source: "page-inject"
+              },
+              "*"
+            );
+          } catch (e) {
+            // 忽略 postMessage 错误
+          }
+
+          xhr.addEventListener("loadend", function () {
+            try {
+              window.postMessage(
+                {
+                  type: "etsy-move-orders-response",
+                  requestId: requestId,
+                  url: _url,
+                  status: xhr.status,
+                  ok: xhr.status >= 200 && xhr.status < 300,
+                  body: xhr.responseText,
+                  source: "page-inject"
+                },
+                "*"
+              );
+            } catch (e) {
+              // 忽略 postMessage 错误
+            }
+          });
+        }
+
+        return originalSend.apply(xhr, arguments);
+      };
+
+      return xhr;
+    }
+
+    window.XMLHttpRequest = PatchedXHR;
+  }
+
+  /**
    * 在主世界中修改 select 下拉框的选中选项
    * 这样可以确保事件能被页面主世界的监听器捕获
    */
@@ -220,6 +407,10 @@
       })();
     }
   });
+
+  // 启用对 Etsy move-orders 接口的劫持
+  patchFetchForEtsyMoveOrders();
+  patchXHRForEtsyMoveOrders();
 
   console.log("✅ [主世界] page-inject.js 已加载，可以访问 window.Etsy 对象和 DOM 操作");
 })();
