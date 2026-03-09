@@ -110,90 +110,58 @@ async function initializeScriptInjection(): Promise<void> {
   }
 }
 
-// 订单状态类型定义
-type OrderState = {
-  type: string;
-  order_state_id: number;
-  client_id: number | null;
-  position: number;
-  name: string;
-  state_type: string;
-  order_count: number | null;
-  actions: string[];
-};
+import {
+  type OrderState,
+  ensureEtsyContextFromMainWorld,
+} from "@/lib/etsy-context";
 
 /**
- * 通过 postMessage 与主世界脚本通信，获取 Etsy 数据（shopId 和 orderStates）
- * @returns Promise<{success: boolean, shopId?: number, orderStates?: OrderState[], error?: string}>
+ * 通过统一的 EtsyContext 服务获取 Etsy 数据（shopId 和 orderStates）
+ * 保持原有返回结构，方便现有调用方复用
  */
-function getEtsyDataFromMainWorld(): Promise<{
+async function getEtsyDataFromMainWorld(): Promise<{
   success: boolean;
   shopId?: number;
   orderStates?: OrderState[];
   error?: string;
 }> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      // 确保注入脚本已加载（使用状态管理，避免重复注入）
-      await injectScript("page-inject.js");
+  try {
+    // 确保注入脚本已加载（使用状态管理，避免重复注入）
+    await injectScript("page-inject.js");
 
-      // 生成唯一的请求 ID
-      const requestId = `etsy-data-${Date.now()}-${Math.random()}`;
-
-      // 设置超时，避免无限等待
-      const timeout = setTimeout(() => {
-        window.removeEventListener("message", handleResponse);
-        reject(new Error("获取 Etsy 数据超时，主世界脚本可能未响应"));
-      }, 5000); // 5秒超时
-
-      // 处理响应
-      function handleResponse(event: MessageEvent) {
-        // 确保消息来自当前窗口
-        if (event.source !== window) return;
-
-        // 检查消息类型和请求 ID
-        if (
-          event.data &&
-          event.data.type === "etsy-data-response" &&
-          event.data.requestId === requestId
-        ) {
-          clearTimeout(timeout);
-          window.removeEventListener("message", handleResponse);
-
-          const { success, shopId, orderStates, error } = event.data;
-
-          if (success && shopId !== undefined) {
-            console.log("✅ [隔离世界] 成功从主世界获取 Etsy 数据");
-            console.log("📋 [隔离世界] shopId:", shopId);
-            console.log("📋 [隔离世界] orderStates 数量:", orderStates?.length || 0);
-            resolve({ success: true, shopId, orderStates });
-          } else {
-            console.warn("⚠️ [隔离世界] 从主世界获取 Etsy 数据失败:", error);
-            resolve({
-              success: false,
-              error: error || "无法获取 Etsy 数据",
-            });
-          }
-        }
-      }
-
-      // 监听响应消息
-      window.addEventListener("message", handleResponse);
-
-      // 发送请求到主世界
-      window.postMessage(
-        {
-          type: "get-etsy-data",
-          requestId: requestId,
-        },
-        "*"
-      );
-      console.log("📤 [隔离世界] 已发送获取 Etsy 数据请求到主世界");
-    } catch (error) {
-      console.error("❌ [隔离世界] 获取 Etsy 数据时发生错误:", error);
-      reject(error);
+    const result = await ensureEtsyContextFromMainWorld();
+    if (result.status !== "ready" || !result.context) {
+      return {
+        success: false,
+        error: result.error || "无法获取 Etsy 数据",
+      };
     }
-  });
+
+    const { shopId, orderStates } = result.context;
+    if (shopId == null) {
+      return {
+        success: false,
+        error: "无法获取店铺 ID",
+      };
+    }
+
+    console.log("✅ [隔离世界] 成功从主世界获取 Etsy 数据", {
+      shopId,
+      orderStatesCount: orderStates?.length ?? 0,
+    });
+
+    return {
+      success: true,
+      shopId,
+      orderStates,
+    };
+  } catch (error) {
+    console.error("❌ [隔离世界] 获取 Etsy 数据时发生错误:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "无法获取 Etsy 数据",
+    };
+  }
 }
 
 export default defineContentScript({
