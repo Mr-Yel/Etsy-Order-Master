@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted } from "vue";
+import { browser } from "wxt/browser";
 import { getEtsyData } from "@/composables/useEtsyData";
 import {
   orderStatesToOptions,
@@ -11,11 +12,15 @@ import {
   mapOrdersToTableRows,
   type ExportTableRow,
 } from "@/utils/orders-mapping";
+import { fetchPlatformOrdersListViaProxy } from "@/api";
 import * as XLSX from "xlsx";
+
+const STORAGE_KEY = "eomUser";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const loading = ref(true);
+const testLoading = ref(false);
 const error = ref<string | null>(null);
 const rows = ref<ExportTableRow[]>([]);
 const selected = ref<Set<number>>(new Set());
@@ -159,6 +164,29 @@ function close() {
   emit("close");
 }
 
+async function testKstApi() {
+  testLoading.value = true;
+  try {
+    const result = await browser.storage.local.get(STORAGE_KEY);
+    const stored = result[STORAGE_KEY] as { token?: string } | undefined;
+    const token = stored?.token;
+    if (!token) {
+      alert("请先登录 KST 后再测试");
+      return;
+    }
+    const data = await fetchPlatformOrdersListViaProxy(
+      { pageNum: 1, pageSize: 10, platformOrderIds: "GSU1QH23B000SAG" },
+      token
+    );
+    alert(`KST 接口测试成功\n总数: ${data.total}\ncode: ${data.code}\nmsg: ${data.msg}`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    alert(`KST 接口测试失败: ${msg}`);
+  } finally {
+    testLoading.value = false;
+  }
+}
+
 onMounted(() => {
   fetchOrders();
 });
@@ -247,6 +275,14 @@ onMounted(() => {
       </div>
 
       <div class="modal-footer">
+        <button
+          type="button"
+          class="btn-test"
+          :disabled="testLoading"
+          @click="testKstApi"
+        >
+          {{ testLoading ? "测试中…" : "测试" }}
+        </button>
         <button
           type="button"
           class="btn-export"
@@ -445,6 +481,27 @@ onMounted(() => {
   border-top: 1px solid #e5e7eb;
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
+}
+
+.btn-test {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #3b82f6;
+  background: #fff;
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn-test:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.btn-test:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .btn-export {
