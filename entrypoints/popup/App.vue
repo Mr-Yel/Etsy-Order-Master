@@ -38,66 +38,15 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { ref } from "vue";
 import OrderExport from "@/components/OrderExport.vue";
 import ImageDownload from "@/components/ImageDownload.vue";
+import { useAuth } from "@/composables/useAuth";
 
 type TabId = "order" | "image";
 
-type StoredUser = {
-  id?: string;
-  name?: string;
-  email?: string;
-};
-
-const STORAGE_KEY = "eomUser";
-
+const { isLoggedIn, openLoginPage } = useAuth();
 const activeTab = ref<TabId>("order");
-const isLoggedIn = ref(false);
-const user = ref<StoredUser | null>(null);
-
-const loadAuthFromStorage = async () => {
-  try {
-    const result = await browser.storage.local.get(STORAGE_KEY);
-    const stored = result[STORAGE_KEY] as StoredUser | undefined;
-
-    if (stored) {
-      user.value = stored;
-      isLoggedIn.value = true;
-    } else {
-      user.value = null;
-      isLoggedIn.value = false;
-    }
-  } catch {
-    user.value = null;
-    isLoggedIn.value = false;
-  }
-};
-
-onMounted(() => {
-  void loadAuthFromStorage();
-});
-
-const LOGIN_URL = browser.runtime.getURL("/login.html");
-
-const openLoginPage = async () => {
-  try {
-    const tabs = await browser.tabs.query({ url: LOGIN_URL });
-    if (tabs.length > 0) {
-      const targetTab = tabs[0];
-      if (targetTab.id != null) {
-        await browser.tabs.update(targetTab.id, { active: true });
-      }
-      if (targetTab.windowId != null) {
-        await browser.windows.update(targetTab.windowId, { focused: true });
-      }
-    } else {
-      await browser.tabs.create({ url: LOGIN_URL });
-    }
-  } catch (error) {
-    console.error("openLoginPage error:", error);
-  }
-};
 </script>
 
 <style scoped>

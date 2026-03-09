@@ -50,7 +50,7 @@
 
           <div v-else class="logged-in">
             <div class="logged-in-avatar">
-              <span class="logged-in-avatar-text">{{ storedName.charAt(0) }}</span>
+              <span class="logged-in-avatar-text">{{ (storedName || "?").charAt(0) }}</span>
             </div>
             <div class="logged-in-info">
               <p class="logged-in-name">{{ storedName }}</p>
@@ -67,65 +67,24 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { browser } from "wxt/browser";
-import { getInfo, login as kstLogin } from "@/api";
+import { computed, ref } from "vue";
+import { useAuth } from "@/composables/useAuth";
 
-const STORAGE_KEY = "eomUser";
+const { user, isLoggedIn, login: doLogin, logout: doLogout } = useAuth();
 
-type StoredUser = {
-  token?: string;
-  name?: string;
-  deptName?: string;
-  id?: string;
-  email?: string;
-};
+const storedName = computed(() => user.value?.name ?? "");
+const storedDeptName = computed(() => user.value?.deptName ?? "");
 
 const username = ref("");
 const password = ref("");
 const isSubmitting = ref(false);
 const errorMsg = ref("");
-const isLoggedIn = ref(false);
-const storedName = ref("");
-const storedDeptName = ref("");
-
-const loadStoredUser = async () => {
-  try {
-    const result = await browser.storage.local.get(STORAGE_KEY);
-    const stored = result[STORAGE_KEY] as StoredUser | undefined;
-    if (stored?.token) {
-      isLoggedIn.value = true;
-      storedName.value = stored.name ?? "";
-      storedDeptName.value = stored.deptName ?? "";
-    } else {
-      isLoggedIn.value = false;
-      storedName.value = "";
-      storedDeptName.value = "";
-    }
-  } catch {
-    isLoggedIn.value = false;
-    storedName.value = "";
-    storedDeptName.value = "";
-  }
-};
 
 const handleLogin = async () => {
-  const u = username.value.trim();
-  const p = password.value;
-  if (!u || !p) {
-    errorMsg.value = "请输入用户名和密码";
-    return;
-  }
   errorMsg.value = "";
   isSubmitting.value = true;
   try {
-    const token = await kstLogin(u, p);
-    const info = await getInfo(token);
-    const nickName = info.nickName ?? info.userName ?? u;
-    const deptName = info.dept?.deptName ?? "";
-    const user: StoredUser = { token, name: nickName, deptName };
-    await browser.storage.local.set({ [STORAGE_KEY]: user });
-    await loadStoredUser();
+    await doLogin(username.value, password.value);
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : "登录失败，请重试";
   } finally {
@@ -134,14 +93,9 @@ const handleLogin = async () => {
 };
 
 const handleLogout = async () => {
-  await browser.storage.local.remove(STORAGE_KEY);
   password.value = "";
-  await loadStoredUser();
+  await doLogout();
 };
-
-onMounted(() => {
-  void loadStoredUser();
-});
 </script>
 
 <style scoped>

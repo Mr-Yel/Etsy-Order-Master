@@ -1,6 +1,5 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted } from "vue";
-import { browser } from "wxt/browser";
 import { getEtsyData } from "@/composables/useEtsyData";
 import {
   orderStatesToOptions,
@@ -13,9 +12,8 @@ import {
   type ExportTableRow,
 } from "@/utils/orders-mapping";
 import { fetchPlatformOrdersListViaProxy } from "@/api";
+import { getToken } from "@/lib/auth-manager";
 import * as XLSX from "xlsx";
-
-const STORAGE_KEY = "eomUser";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -167,9 +165,7 @@ function close() {
 async function testKstApi() {
   testLoading.value = true;
   try {
-    const result = await browser.storage.local.get(STORAGE_KEY);
-    const stored = result[STORAGE_KEY] as { token?: string } | undefined;
-    const token = stored?.token;
+    const token = await getToken();
     if (!token) {
       alert("请先登录 KST 后再测试");
       return;
