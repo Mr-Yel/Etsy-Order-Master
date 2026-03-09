@@ -336,7 +336,7 @@ export default defineContentScript({
         const rows: ExportTableRow[] = mapOrdersToTableRows(
           filteredOrders as any,
           buyers as any,
-          {}
+          { shopId }
         );
 
         console.log("✅ [隔离世界] mapOrdersToTableRows 完成", {

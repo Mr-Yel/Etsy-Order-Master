@@ -1,3 +1,5 @@
+import { getExportOrderId } from "./order-id-rules";
+
 /**
  * 将订单列表接口返回的 orders + buyers 映射为导出表行
  * 字段与顺序以 etsy-order-api-fields-mapping.md 第一节为准（36 列）
@@ -147,8 +149,8 @@ export type ProcessingFeeFromDetail = {
 };
 
 export type MapOrdersOptions = {
-  /** 订单 ID 前缀，如 SLA/SLB/SLC，默认 SLC */
-  orderIdPrefix?: string;
+  /** Etsy 店铺 ID，用于根据规则生成导出用订单 ID */
+  shopId?: number;
   /** 按 order_id 的收益明细（含 processing_fee），用于填充 Card Processing Fees */
   earningsByOrderId?: Record<number, { fees_and_credits_details?: { processing_fee?: ProcessingFeeFromDetail } }>;
 };
@@ -158,7 +160,7 @@ export function mapOrdersToTableRows(
   buyers: RawBuyer[],
   options: MapOrdersOptions = {}
 ): ExportTableRow[] {
-  const { orderIdPrefix = "SLC", earningsByOrderId } = options;
+  const { shopId, earningsByOrderId } = options;
   const buyerMap = new Map<number, RawBuyer>();
   buyers.forEach((b) => {
     if (b.buyer_id != null) buyerMap.set(b.buyer_id, b);
@@ -198,7 +200,10 @@ export function mapOrdersToTableRows(
 
     return {
       "Sale Date": formatSaleDate(order.order_date),
-      "Order ID": `${orderIdPrefix}${order.order_id}`,
+      "Order ID": getExportOrderId({
+        shopId,
+        orderId: order.order_id,
+      }),
       "Buyer User ID": safeStr(buyer?.username),
       "Full Name": fullName,
       "First Name": firstName,

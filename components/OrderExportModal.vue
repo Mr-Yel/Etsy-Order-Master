@@ -133,7 +133,7 @@ async function fetchOrders() {
     rows.value = mapOrdersToTableRows(
       orderList as Parameters<typeof mapOrdersToTableRows>[0],
       buyers as Parameters<typeof mapOrdersToTableRows>[1],
-      { earningsByOrderId }
+      { earningsByOrderId, shopId: etsy.shopId }
     );
     selected.value = new Set(rows.value.map((_, i) => i));
   } catch (e) {
