@@ -1,13 +1,13 @@
 import { createApp } from "vue";
 import JSZip from "jszip";
-import * as XLSX from "xlsx";
 import ContentScriptWrapper from "@/components/ContentScriptWrapper.vue";
-import { fetchOrderList } from "@/composables/useFetchOrderList";
 import {
-  EXPORT_COLUMNS,
-  mapOrdersToTableRows,
-  type ExportTableRow,
-} from "@/utils/orders-mapping";
+  fetchOrderList,
+  getOrderListBaseParams,
+} from "@/composables/useFetchOrderList";
+import { mapOrdersToTableRows, type ExportTableRow } from "@/utils/orders-mapping";
+import { isLoggedIn } from "@/lib/auth-manager";
+import { syncOrdersToKst } from "@/lib/kst-order-sync";
 
 /**
  * 脚本注入状态管理
@@ -171,7 +171,7 @@ export default defineContentScript({
   async main() {
     // 初始化脚本注入（在启动时立即注入 page-inject.js）
     await initializeScriptInjection();
-    console.log("✅ [隔离世界] content main 已启动，准备处理 Etsy move-orders 拦截与自动导出逻辑");
+    console.log("✅ [隔离世界] content main 已启动，准备处理 Etsy move-orders 拦截与自动同步到 KST 逻辑");
 
     // 缓存从主世界获取的 Etsy 数据（shopId 与 orderStates）
     let cachedShopId: number | undefined;
@@ -214,7 +214,7 @@ export default defineContentScript({
       return { shopId: cachedShopId, orderStates: cachedOrderStates };
     };
 
-    // 记录「准备将订单移动到 New/待处理」的请求信息，待响应成功后再真正导出
+    // 记录「准备将订单移动到待处理」的请求信息，待响应成功后再同步到 KST
     const pendingMoveToNewByRequestId = new Map<
       string,
       {
@@ -226,73 +226,49 @@ export default defineContentScript({
     >();
 
     /**
-     * 当捕获到将订单状态修改为“New/待处理”时，自动导出本次涉及的订单
+     * 当捕获到将订单状态修改为「待处理」时，直接同步到 KST 订单系统（不导出 Excel，与弹窗「同步到 KST」流程一致）
      */
-    const exportOrdersForMoveToNew = async (params: {
+    const syncOrdersForMoveToPending = async (params: {
       shopId?: number;
       targetStateId?: number;
       targetStateName?: string;
       orderIds: (string | number)[];
       requestId?: string;
     }) => {
-      const { shopId, targetStateId, targetStateName, orderIds, requestId } = params;
-      console.log("📦 [隔离世界] 准备为 move-orders 导出订单（入口）", {
+      const { shopId, targetStateId, orderIds, requestId } = params;
+      console.log("[待处理监听] syncOrdersForMoveToPending 入口", {
         requestId,
         shopId,
         targetStateId,
-        targetStateName,
         orderIdsCount: orderIds.length,
       });
 
       if (shopId == null) {
-        console.warn("⚠️ [隔离世界] 导出中止：shopId 为空", { requestId });
+        console.warn("[待处理监听] 同步中止：shopId 为空", { requestId });
         return;
       }
       if (!orderIds.length) {
-        console.warn("⚠️ [隔离世界] 导出中止：orderIds 为空", { requestId });
+        console.warn("[待处理监听] 同步中止：orderIds 为空", { requestId });
         return;
       }
 
       try {
-        // 目标状态 ID 作为 filters[order_state_id]
         const stateIdStr =
           targetStateId != null ? String(targetStateId) : undefined;
         if (!stateIdStr) {
-          console.warn("⚠️ [隔离世界] 导出中止：targetStateId 为空", {
+          console.warn("[待处理监听] 同步中止：targetStateId 为空", {
             requestId,
-            targetStateName,
           });
           return;
         }
 
-        // 这里借用订单导出 modal 的默认筛选参数，只调整 order_state_id
-        const baseParams: Record<string, string> = {
-          "filters[buyer_id]": "all",
-          "filters[channel]": "all",
-          "filters[completed_status]": "all",
-          "filters[completed_date]": "all",
-          "filters[destination]": "all",
-          "filters[ship_date]": "all",
-          "filters[shipping_label_eligibility]": "false",
-          "filters[shipping_label_status]": "all",
-          "filters[has_buyer_notes]": "false",
-          "filters[is_marked_as_gift]": "false",
-          "filters[is_personalized]": "false",
-          "filters[has_shipping_upgrade]": "false",
-          "filters[order_state_id]": stateIdStr,
-          search_terms: "",
-          sort_by: "order_date",
-          sort_order: "desc",
-          "objects_enabled_for_normalization[order_state]": "true",
-        };
-
-        // 请求数量：至少等于本次涉及的订单数，适当放大一点以提高命中率
+        const baseParams = getOrderListBaseParams(stateIdStr);
         const requestedCount = Math.max(orderIds.length, 100);
-        console.log("📡 [隔离世界] 调用 fetchOrderList 获取订单列表", {
+        console.log("[待处理监听] 同步 步骤 1/4：请求待处理订单列表", {
           requestId,
           shopId,
           requestedCount,
-          baseParams,
+          filtersOrderStateId: baseParams["filters[order_state_id]"],
         });
 
         const { orders, buyers } = await fetchOrderList(
@@ -302,84 +278,77 @@ export default defineContentScript({
           { credentials: "include" }
         );
 
-        console.log("📥 [隔离世界] fetchOrderList 返回结果", {
+        console.log("[待处理监听] fetchOrderList 返回", {
           requestId,
           totalOrders: orders.length,
           buyersCount: buyers.length,
         });
 
-        // 按本次 move-orders 涉及的 orderIds 过滤出目标订单
         const targetIdSet = new Set(orderIds.map((v) => String(v)));
         const filteredOrders = orders.filter((o) =>
           targetIdSet.has(String((o as any).order_id))
         );
+        const foundIds = filteredOrders.map((o) => String((o as any).order_id));
+        const foundIdSet = new Set(foundIds);
+        const missingIds = orderIds.filter((id) => !foundIdSet.has(String(id)));
+        if (missingIds.length > 0) {
+          console.warn("[待处理监听] 部分订单在列表中未找到（可能延迟或分页未覆盖）", {
+            requestId,
+            missingCount: missingIds.length,
+            missingIdsPreview: missingIds.slice(0, 10),
+          });
+        }
 
-        console.log("🔎 [隔离世界] 根据 orderIds 过滤后的订单", {
+        console.log("[待处理监听] 同步 步骤 2/4：过滤结果", {
           requestId,
-          targetCount: filteredOrders.length,
           expectedCount: orderIds.length,
+          filteredCount: filteredOrders.length,
+          foundIdsPreview: foundIds.slice(0, 5),
         });
 
         if (!filteredOrders.length) {
-          console.warn("⚠️ [隔离世界] 导出中止：未在订单列表中找到任何匹配的订单", {
+          console.warn("[待处理监听] 同步中止：无匹配订单", {
             requestId,
-            orderIds,
+            orderIdsPreview: orderIds.slice(0, 10),
           });
           return;
         }
 
-        // 映射为导出表格行（复用现有订单导出逻辑）
-        console.log("🧮 [隔离世界] 开始 mapOrdersToTableRows", {
-          requestId,
-          filteredOrdersCount: filteredOrders.length,
-        });
+        console.log("[待处理监听] 同步 步骤 3/4：映射为表格行 mapOrdersToTableRows");
         const rows: ExportTableRow[] = mapOrdersToTableRows(
           filteredOrders as any,
           buyers as any,
           { shopId }
         );
-
-        console.log("✅ [隔离世界] mapOrdersToTableRows 完成", {
+        console.log("[待处理监听] mapOrdersToTableRows 完成", {
           requestId,
           rowCount: rows.length,
         });
 
-        // 使用 XLSX 导出为 Excel 文件
-        const ws = XLSX.utils.json_to_sheet(rows, {
-          header: [...EXPORT_COLUMNS],
-        });
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Orders");
-
-        const now = new Date();
-        const datePart = now.toISOString().slice(0, 10);
-        const timePart = `${now
-          .getHours()
-          .toString()
-          .padStart(2, "0")}${now.getMinutes().toString().padStart(2, "0")}`;
-        const safeStateName =
-          (targetStateName || "unknown").replace(/[/\\?*:|"<>\s]/g, "_");
-        const filename = `orders-move-to-${safeStateName}-${datePart}-${timePart}.xlsx`;
-
-        console.log("📤 [隔离世界] 正在写出 Excel 文件", {
-          requestId,
-          filename,
-        });
-        XLSX.writeFile(wb, filename);
-        console.log("🎉 [隔离世界] 自动导出完成（move-orders）", {
-          requestId,
-          filename,
-          exportedCount: rows.length,
-        });
+        console.log("[待处理监听] 同步 步骤 4/4：同步到 KST 订单系统");
+        try {
+          await syncOrdersToKst({ shopId, rows });
+          console.log("[待处理监听] KST 同步成功", {
+            requestId,
+            rowCount: rows.length,
+          });
+        } catch (syncError) {
+          console.error("[待处理监听] KST 同步失败", {
+            requestId,
+            error: syncError,
+            errorMessage: syncError instanceof Error ? syncError.message : String(syncError),
+          });
+        }
       } catch (error) {
-        console.error("❌ [隔离世界] 自动导出 move-orders 订单失败", {
+        console.error("[待处理监听] syncOrdersForMoveToPending 异常", {
           requestId,
           error,
+          errorMessage: error instanceof Error ? error.message : String(error),
         });
       }
     };
 
-    // 监听主世界发来的 Etsy move-orders 拦截数据
+    // 监听主世界发来的 Etsy move-orders 拦截数据（待处理监听流程，便于排查可搜 [待处理监听]）
     window.addEventListener("message", (event: MessageEvent) => {
       if (event.source !== window) return;
       const data = event.data as
@@ -394,31 +363,56 @@ export default defineContentScript({
             ok?: boolean;
           }
         | undefined;
+
+      const isMoveOrdersEvent =
+        data?.type === "etsy-move-orders-request" ||
+        data?.type === "etsy-move-orders-response";
+      if (isMoveOrdersEvent) {
+        console.log("[待处理监听] 收到 move-orders 相关消息", {
+          type: data.type,
+          requestId: data.requestId,
+          source: data.source,
+        });
+      }
+
       if (!data || data.source !== "page-inject") return;
 
       if (data.type === "etsy-move-orders-request") {
         void (async () => {
+          console.log("[待处理监听] 步骤 1/5：开始处理 move-orders 请求");
           try {
+            console.log("[待处理监听] 步骤 2/5：获取 Etsy 数据（shopId、orderStates）");
             const { shopId, orderStates } = await ensureEtsyData();
-            console.log("🔔 [隔离世界] 收到 etsy-move-orders-request 事件", {
+            console.log("[待处理监听] ensureEtsyData 结果", {
               requestId: data.requestId,
-              url: data.url,
-              method: data.method,
-              hasShopId: shopId != null,
+              shopId,
+              shopIdOk: shopId != null,
               orderStatesCount: orderStates?.length ?? 0,
+              orderStatesSummary:
+                orderStates?.map((s) => ({ id: s.order_state_id, name: s.name })) ?? [],
             });
 
             let parsedBody: any = null;
-            if (typeof data.body === "string" && data.body.trim()) {
+            const bodyStr = typeof data.body === "string" ? data.body : "";
+            if (bodyStr.trim()) {
               try {
-                parsedBody = JSON.parse(data.body);
-              } catch {
-                // 忽略 body 解析错误
-                console.warn("⚠️ [隔离世界] move-orders body JSON 解析失败，将使用原始字符串", {
+                parsedBody = JSON.parse(bodyStr);
+                console.log("[待处理监听] 请求 body 解析成功", {
                   requestId: data.requestId,
-                  rawBody: data.body,
+                  hasOrderStateId: parsedBody?.order_state_id != null,
+                  orderIdsLength: Array.isArray(parsedBody?.order_ids)
+                    ? parsedBody.order_ids.length
+                    : 0,
+                });
+              } catch {
+                console.warn("[待处理监听] 请求 body JSON 解析失败", {
+                  requestId: data.requestId,
+                  bodyLength: bodyStr.length,
+                  bodyPreview: bodyStr.slice(0, 200),
                 });
               }
+            } else {
+              console.warn("[待处理监听] 请求 body 为空", { requestId: data.requestId });
             }
 
             const orderStateId: number | undefined = parsedBody?.order_state_id;
@@ -431,27 +425,32 @@ export default defineContentScript({
                 ? orderStates.find((s) => s.order_state_id === orderStateId)?.name ?? ""
                 : "";
 
-            console.log("📥 [隔离世界] 捕获 Etsy move-orders 请求:", {
+            console.log("[待处理监听] 步骤 3/5：解析请求参数", {
               requestId: data.requestId,
-              shopId,
-              url: data.url,
-              method: data.method,
               orderStateId,
-              orderStateName: stateName, // 这里就是 Etsy 返回的英文名，如 "New" / "In production"
-              orderIds,
-              rawBody: data.body,
+              stateName,
+              orderIdsCount: orderIds.length,
+              orderIdsPreview: orderIds.slice(0, 5),
             });
 
-            // 当目标状态为 "New"（待处理）时，记录下来，待响应成功后再触发自动导出
-            const isMoveToNew =
-              !!stateName && stateName.toLowerCase() === "new";
-            console.log("🧷 [隔离世界] move-orders 状态检查", {
+            // 当目标状态为「待处理」时触发（API 可能返回英文 "New" 或中文 "待处理"）
+            const normalizedName = (stateName ?? "").trim().toLowerCase();
+            const isMoveToPending =
+              normalizedName === "new" || normalizedName === "待处理";
+            console.log("[待处理监听] 步骤 4/5：判断是否为目标状态「待处理」", {
               requestId: data.requestId,
               stateName,
-              isMoveToNew,
+              normalizedName,
+              isMoveToPending,
+              matchReason:
+                isMoveToPending
+                  ? normalizedName === "new"
+                    ? "匹配英文 New"
+                    : "匹配中文 待处理"
+                  : "不匹配",
             });
 
-            if (isMoveToNew) {
+            if (isMoveToPending) {
               if (data.requestId) {
                 pendingMoveToNewByRequestId.set(data.requestId, {
                   shopId,
@@ -459,95 +458,124 @@ export default defineContentScript({
                   targetStateName: stateName,
                   orderIds,
                 });
-                console.log("📌 [隔离世界] 已缓存待导出的 move-to-New 请求，等待响应成功后处理", {
+                console.log("[待处理监听] 步骤 5/5：已写入缓存，等待响应", {
                   requestId: data.requestId,
                   cachedShopId: shopId,
                   targetStateId: orderStateId,
                   orderIdsCount: orderIds.length,
+                  cacheSize: pendingMoveToNewByRequestId.size,
+                  cacheKeys: [...pendingMoveToNewByRequestId.keys()],
                 });
               } else {
-                console.warn("⚠️ [隔离世界] move-to-New 请求缺少 requestId，无法在响应阶段匹配导出", {
+                console.warn("[待处理监听] 无法缓存：缺少 requestId", {
                   stateName,
-                  orderIds,
+                  orderIdsCount: orderIds.length,
                 });
               }
             } else {
-              console.log("ℹ️ [隔离世界] 本次 move-orders 目标状态非 New，跳过自动导出", {
+              console.log("[待处理监听] 非待处理状态，不缓存", {
                 requestId: data.requestId,
                 stateName,
               });
             }
           } catch (err) {
-            console.error("📥 [隔离世界] 解析 Etsy move-orders 请求失败:", {
-              data,
+            console.error("[待处理监听] 处理 move-orders 请求异常", {
+              requestId: data.requestId,
               error: err,
+              errorMessage: err instanceof Error ? err.message : String(err),
             });
           }
         })();
       }
 
       if (data.type === "etsy-move-orders-response") {
-        console.log("📤 [隔离世界] 捕获 Etsy move-orders 响应:", {
-          requestId: data.requestId,
-          url: data.url,
-          status: data.status,
-          ok: data.ok,
-          body: data.body,
-        });
-
-        const requestId = data.requestId;
-        if (!requestId) {
-          console.warn("⚠️ [隔离世界] move-orders 响应缺少 requestId，无法匹配到请求缓存");
-          return;
-        }
-
-        const pending = pendingMoveToNewByRequestId.get(requestId);
-        if (!pending) {
-          console.log("ℹ️ [隔离世界] move-orders 响应对应的请求未标记为 move-to-New，跳过自动导出", {
-            requestId,
-          });
-          return;
-        }
-
-        // 只有当响应成功（状态码 2xx 且 ok=true）时才触发导出
-        const isSuccess =
-          data.ok === true &&
-          typeof data.status === "number" &&
-          data.status >= 200 &&
-          data.status < 300;
-
-        console.log("🧾 [隔离世界] move-orders 响应状态检查（用于决定是否导出）", {
-          requestId,
-          status: data.status,
-          ok: data.ok,
-          isSuccess,
-        });
-
-        if (!isSuccess) {
-          console.warn("⚠️ [隔离世界] move-orders 响应非成功状态，自动导出取消", {
+        void (async () => {
+          const requestId = data.requestId;
+          console.log("[待处理监听] 响应 步骤 1/6：收到 move-orders 响应", {
             requestId,
             status: data.status,
             ok: data.ok,
+            bodyLength: typeof data.body === "string" ? data.body.length : 0,
           });
-          // 无论成功与否，都可以清理缓存，避免内存泄漏
+
+          if (!requestId) {
+            console.warn("[待处理监听] 响应 步骤 1 失败：缺少 requestId，无法匹配缓存");
+            return;
+          }
+
+          console.log("[待处理监听] 响应 步骤 2/6：查找请求缓存", {
+            requestId,
+            cacheSize: pendingMoveToNewByRequestId.size,
+            cacheKeys: [...pendingMoveToNewByRequestId.keys()],
+          });
+          const pending = pendingMoveToNewByRequestId.get(requestId);
+          if (!pending) {
+            console.log("[待处理监听] 未找到对应请求缓存（可能非待处理或 requestId 不一致）", {
+              requestId,
+            });
+            return;
+          }
+          console.log("[待处理监听] 已找到缓存", {
+            requestId,
+            shopId: pending.shopId,
+            orderIdsCount: pending.orderIds.length,
+          });
+
+          const isSuccess =
+            data.ok === true &&
+            typeof data.status === "number" &&
+            data.status >= 200 &&
+            data.status < 300;
+          console.log("[待处理监听] 响应 步骤 3/6：检查 HTTP 状态", {
+            requestId,
+            status: data.status,
+            ok: data.ok,
+            isSuccess,
+            willTrigger: isSuccess,
+          });
+
+          if (!isSuccess) {
+            console.warn("[待处理监听] 响应非 2xx，取消同步到 KST", {
+              requestId,
+              status: data.status,
+            });
+            pendingMoveToNewByRequestId.delete(requestId);
+            console.log("[待处理监听] 已从缓存移除", {
+              requestId,
+              cacheSize: pendingMoveToNewByRequestId.size,
+            });
+            return;
+          }
+
+          console.log("[待处理监听] 响应 步骤 4/6：检查 KST 登录状态");
+          const loggedIn = await isLoggedIn();
+          if (!loggedIn) {
+            console.warn("[待处理监听] 未登录 KST，中断流程", { requestId });
+            pendingMoveToNewByRequestId.delete(requestId);
+            return;
+          }
+          console.log("[待处理监听] 已登录 KST，继续");
+
           pendingMoveToNewByRequestId.delete(requestId);
-          return;
-        }
+          console.log("[待处理监听] 响应 步骤 5/6：清理缓存并触发同步到 KST", {
+            requestId,
+            cacheSizeAfter: pendingMoveToNewByRequestId.size,
+            params: {
+              shopId: pending.shopId,
+              targetStateId: pending.targetStateId,
+              orderIdsCount: pending.orderIds.length,
+            },
+          });
 
-        // 成功响应：触发导出，然后清理缓存
-        pendingMoveToNewByRequestId.delete(requestId);
-        console.log("🚀 [隔离世界] move-orders 响应成功，开始执行自动导出（New/待处理）", {
-          requestId,
-          cachedParams: pending,
-        });
-
-        void exportOrdersForMoveToNew({
-          shopId: pending.shopId,
-          targetStateId: pending.targetStateId,
-          targetStateName: pending.targetStateName,
-          orderIds: pending.orderIds,
-          requestId,
-        });
+          console.log("[待处理监听] 响应 步骤 6/6：调用 syncOrdersForMoveToPending");
+          await syncOrdersForMoveToPending({
+            shopId: pending.shopId,
+            targetStateId: pending.targetStateId,
+            targetStateName: pending.targetStateName,
+            orderIds: pending.orderIds,
+            requestId,
+          });
+        })();
       }
     });
 

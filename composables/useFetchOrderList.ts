@@ -8,6 +8,32 @@ const MAX_LIMIT_PER_REQUEST = 50;
 
 export type OrderListBaseParams = Record<string, string>;
 
+/**
+ * 订单列表请求的公共筛选参数（与订单状态无关的固定项）
+ * 用于 content 自动同步与 OrderExportModal 等，避免多处重复
+ */
+export function getOrderListBaseParams(stateId: string): OrderListBaseParams {
+  return {
+    "filters[buyer_id]": "all",
+    "filters[channel]": "all",
+    "filters[completed_status]": "all",
+    "filters[completed_date]": "all",
+    "filters[destination]": "all",
+    "filters[ship_date]": "all",
+    "filters[shipping_label_eligibility]": "false",
+    "filters[shipping_label_status]": "all",
+    "filters[has_buyer_notes]": "false",
+    "filters[is_marked_as_gift]": "false",
+    "filters[is_personalized]": "false",
+    "filters[has_shipping_upgrade]": "false",
+    "filters[order_state_id]": stateId,
+    search_terms: "",
+    sort_by: "order_date",
+    sort_order: "desc",
+    "objects_enabled_for_normalization[order_state]": "true",
+  };
+}
+
 export type FetchOrderListOptions = {
   credentials?: RequestCredentials;
 };

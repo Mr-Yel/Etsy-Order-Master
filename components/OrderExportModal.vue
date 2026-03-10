@@ -5,7 +5,10 @@ import {
   orderStatesToOptions,
   getDefaultOrderStateId,
 } from "@/composables/useOrderStates";
-import { fetchOrderList } from "@/composables/useFetchOrderList";
+import {
+  fetchOrderList,
+  getOrderListBaseParams,
+} from "@/composables/useFetchOrderList";
 import {
   EXPORT_COLUMNS,
   mapOrdersToTableRows,
@@ -81,25 +84,7 @@ async function fetchOrders() {
     }
     const stateId = String(stateIdRaw);
 
-    const baseParams: Record<string, string> = {
-      "filters[buyer_id]": "all",
-      "filters[channel]": "all",
-      "filters[completed_status]": "all",
-      "filters[completed_date]": "all",
-      "filters[destination]": "all",
-      "filters[ship_date]": "all",
-      "filters[shipping_label_eligibility]": "false",
-      "filters[shipping_label_status]": "all",
-      "filters[has_buyer_notes]": "false",
-      "filters[is_marked_as_gift]": "false",
-      "filters[is_personalized]": "false",
-      "filters[has_shipping_upgrade]": "false",
-      "filters[order_state_id]": stateId,
-      search_terms: "",
-      sort_by: "order_date",
-      sort_order: "desc",
-      "objects_enabled_for_normalization[order_state]": "true",
-    };
+    const baseParams = getOrderListBaseParams(stateId);
 
     const { orders: orderList, buyers } = await fetchOrderList(
       etsy.shopId,
