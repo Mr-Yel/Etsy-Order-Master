@@ -12,8 +12,11 @@ import {
   type ExportTableRow,
 } from "@/utils/orders-mapping";
 import * as XLSX from "xlsx";
+import { syncOrdersToKst } from "@/lib/kst-order-sync";
+import { useAuth } from "@/composables/useAuth";
 
 const emit = defineEmits<{ (e: "close"): void }>();
+const { isLoggedIn, openLoginPage, loadUser } = useAuth();
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -22,6 +25,7 @@ const selected = ref<Set<number>>(new Set());
 const orderStateOptions = ref<{ label: string; value: number }[]>([]);
 const selectedOrderStateId = ref<number | "">("");
 const pageSize = ref(999);
+const isSyncingToKst = ref(false);
 
 const columns = EXPORT_COLUMNS;
 
@@ -155,6 +159,44 @@ function exportSelected() {
   XLSX.writeFile(wb, name);
 }
 
+async function syncSelectedToKst() {
+  const data = selectedRows.value;
+  if (data.length === 0) {
+    return;
+  }
+  loading.value = true;
+
+  await loadUser();
+  if (!isLoggedIn.value) {
+    error.value = "请先登录 KST 账号后再同步订单";
+    loading.value = false;
+    openLoginPage();
+    return;
+  }
+
+  isSyncingToKst.value = true;
+  error.value = null;
+
+  try {
+    const etsy = await getEtsyData();
+    if (!etsy.success || etsy.shopId == null) {
+      console.warn("[KST] 无法获取 shopId，取消同步");
+      return;
+    }
+
+    await syncOrdersToKst({
+      shopId: etsy.shopId,
+      rows: data,
+    });
+
+  } catch (e) {
+    console.error("[KST] 同步到 KST 失败", e);
+  } finally {
+    isSyncingToKst.value = false;
+    loading.value = false;
+  }
+}
+
 function close() {
   emit("close");
 }
@@ -170,7 +212,7 @@ onMounted(() => {
     <div class="modal">
       <div class="modal-header">
         <div class="modal-header-left">
-          <h2 class="modal-title">订单导出</h2>
+          <h2 class="modal-title">订单管理</h2>
           <label v-if="orderStateOptions.length > 0" class="state-select-wrap">
             <span class="state-select-label">订单状态</span>
             <select
@@ -248,14 +290,25 @@ onMounted(() => {
       </div>
 
       <div class="modal-footer">
+        <span>已选 {{ selectedRows.length }} 条订单</span>
+       <div>
         <button
           type="button"
           class="btn-export"
-          :disabled="loading || !!error || selectedRows.length === 0"
+          :disabled="loading || isSyncingToKst || !!error || selectedRows.length === 0"
+          @click="syncSelectedToKst"
+        >
+          同步到 KST 订单系统 (会自动进行去重)
+        </button>
+        <button
+          type="button"
+          class="btn-export"
+          :disabled="loading || isSyncingToKst || !!error || selectedRows.length === 0"
           @click="exportSelected"
         >
-          导出 ({{ selectedRows.length }})
+          导出 Excel
         </button>
+       </div>
       </div>
     </div>
   </div>
@@ -445,7 +498,7 @@ onMounted(() => {
   padding: 12px 20px;
   border-top: 1px solid #e5e7eb;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 12px;
 }
 
@@ -458,6 +511,10 @@ onMounted(() => {
   border: none;
   border-radius: 8px;
   cursor: pointer;
+}
+
+.btn-export {
+  margin-left: 12px;
 }
 
 .btn-export:hover:not(:disabled) {
