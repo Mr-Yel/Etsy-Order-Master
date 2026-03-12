@@ -36,6 +36,15 @@
                 autocomplete="current-password"
               />
             </label>
+            <label class="form-remember">
+              <input
+                v-model="rememberCredentials"
+                type="checkbox"
+                class="form-checkbox"
+                :disabled="isSubmitting"
+              />
+              <span class="form-remember-text">记住账号密码</span>
+            </label>
             <div v-if="errorMsg" class="form-error" role="alert">
               {{ errorMsg }}
             </div>
@@ -67,8 +76,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useAuth } from "@/composables/useAuth";
+import {
+  getRememberedCredentials,
+  setRememberedCredentials,
+  clearRememberedCredentials,
+} from "@/lib/auth-manager";
 
 const { user, isLoggedIn, login: doLogin, logout: doLogout } = useAuth();
 
@@ -77,14 +91,29 @@ const storedDeptName = computed(() => user.value?.deptName ?? "");
 
 const username = ref("");
 const password = ref("");
+const rememberCredentials = ref(true);
 const isSubmitting = ref(false);
 const errorMsg = ref("");
+
+onMounted(async () => {
+  const saved = await getRememberedCredentials();
+  if (saved) {
+    username.value = saved.username;
+    password.value = saved.password;
+    rememberCredentials.value = true;
+  }
+});
 
 const handleLogin = async () => {
   errorMsg.value = "";
   isSubmitting.value = true;
   try {
     await doLogin(username.value, password.value);
+    if (rememberCredentials.value) {
+      await setRememberedCredentials(username.value, password.value);
+    } else {
+      await clearRememberedCredentials();
+    }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : "登录失败，请重试";
   } finally {
@@ -235,6 +264,30 @@ const handleLogout = async () => {
 .form-input:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.form-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.form-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.form-checkbox:disabled {
+  cursor: not-allowed;
+}
+
+.form-remember-text {
+  font-size: 13px;
+  color: #475569;
 }
 
 .form-error {

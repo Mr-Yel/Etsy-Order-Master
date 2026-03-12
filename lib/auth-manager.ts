@@ -9,6 +9,12 @@ import { getInfo, login as kstLogin } from "@/api";
 import type { StoredUser } from "@/types/auth";
 
 const STORAGE_KEY = "eomUser";
+const CREDENTIALS_STORAGE_KEY = "eomRememberCredentials";
+
+export type RememberedCredentials = {
+  username: string;
+  password: string;
+};
 
 /** 构建时由 dev-token.txt 注入的本地免登录 token（有则用，不区分 dev/build） */
 const getDevToken = (): string | null => {
@@ -80,6 +86,42 @@ export async function login(username: string, password: string): Promise<void> {
  */
 export async function logout(): Promise<void> {
   await browser.storage.local.remove(STORAGE_KEY);
+}
+
+/**
+ * 读取「记住的账号密码」（仅登录页回填用）
+ */
+export async function getRememberedCredentials(): Promise<RememberedCredentials | null> {
+  try {
+    const result = await browser.storage.local.get(CREDENTIALS_STORAGE_KEY);
+    const stored = result[CREDENTIALS_STORAGE_KEY] as RememberedCredentials | undefined;
+    if (!stored?.username) return null;
+    return { username: stored.username, password: stored.password ?? "" };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 保存「记住的账号密码」
+ */
+export async function setRememberedCredentials(
+  username: string,
+  password: string
+): Promise<void> {
+  await browser.storage.local.set({
+    [CREDENTIALS_STORAGE_KEY]: {
+      username: username.trim(),
+      password,
+    },
+  });
+}
+
+/**
+ * 清除「记住的账号密码」
+ */
+export async function clearRememberedCredentials(): Promise<void> {
+  await browser.storage.local.remove(CREDENTIALS_STORAGE_KEY);
 }
 
 /**
