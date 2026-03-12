@@ -6,6 +6,7 @@ import {
   type PlatformOrdersListResponse,
 } from "@/api";
 import { getToken } from "@/lib/auth-manager";
+import { getNotyf } from "@/lib/notyf";
 
 type SyncOrdersToKstParams = {
   shopId: number;
@@ -97,18 +98,21 @@ export const syncOrdersToKst = async ({
 }: SyncOrdersToKstParams): Promise<void> => {
   if (!rows.length) {
     console.log("[KST] 无选中订单，跳过同步");
+    getNotyf().error("请先选择要同步的订单");
     return;
   }
 
   const token = await getToken();
   if (!token) {
     console.warn("[KST] 未获取到 KST token，无法同步订单");
+    getNotyf().error("请先登录 KST 账号后再同步订单");
     return;
   }
 
   const allIds = collectOrderIds(rows);
   if (!allIds.length) {
     console.log("[KST] 选中订单中没有有效的 Order ID，跳过同步");
+    getNotyf().error("选中订单中没有有效的 Order ID");
     return;
   }
 
@@ -133,6 +137,7 @@ export const syncOrdersToKst = async ({
 
   if (!rowsToSync.length) {
     console.log("[KST] 所选订单均已在 KST 中存在，未执行导入");
+    getNotyf().success("所选订单均已在 KST 中存在，无需重复导入");
     return;
   }
 
@@ -152,8 +157,12 @@ export const syncOrdersToKst = async ({
       token
     );
     console.log("[KST] 订单导入接口返回", res);
+    getNotyf().success(`已同步 ${rowsToSync.length} 条订单到 KST`);
   } catch (error) {
+    const msg =
+      error instanceof Error ? error.message : "同步到 KST 失败，请重试";
     console.error("[KST] 导入订单到 KST 失败", error);
+    getNotyf().error(msg);
   }
 };
 

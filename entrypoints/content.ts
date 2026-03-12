@@ -8,6 +8,18 @@ import {
 import { mapOrdersToTableRows, type ExportTableRow } from "@/utils/orders-mapping";
 import { isLoggedIn } from "@/lib/auth-manager";
 import { syncOrdersToKst } from "@/lib/kst-order-sync";
+import { getNotyf } from "@/lib/notyf";
+
+/** 将订单号数组格式化为简短预览，用于错误提示（最多展示前几条 + 等N条） */
+function formatOrderIdsPreview(
+  orderIds: (string | number)[],
+  maxShow = 5
+): string {
+  if (!orderIds.length) return "";
+  const parts = orderIds.slice(0, maxShow).map((id) => String(id));
+  const preview = parts.join("、");
+  return orderIds.length > maxShow ? `${preview} 等${orderIds.length}条` : preview;
+}
 
 /**
  * 脚本注入状态管理
@@ -236,7 +248,7 @@ export default defineContentScript({
       requestId?: string;
     }) => {
       const { shopId, targetStateId, orderIds, requestId } = params;
-      console.log("[待处理监听] syncOrdersForMoveToPending 入口", {
+      console.log("[待处理监听] 入口", {
         requestId,
         shopId,
         targetStateId,
@@ -245,10 +257,17 @@ export default defineContentScript({
 
       if (shopId == null) {
         console.warn("[待处理监听] 同步中止：shopId 为空", { requestId });
+        const idPreview = formatOrderIdsPreview(orderIds);
+        getNotyf().error(
+          idPreview
+            ? `无法获取店铺信息，自动同步已取消（订单号：${idPreview}）`
+            : "无法获取店铺信息，自动同步已取消"
+        );
         return;
       }
       if (!orderIds.length) {
         console.warn("[待处理监听] 同步中止：orderIds 为空", { requestId });
+        getNotyf().error("没有待同步的订单");
         return;
       }
 
@@ -311,6 +330,12 @@ export default defineContentScript({
             requestId,
             orderIdsPreview: orderIds.slice(0, 10),
           });
+          const idPreview = formatOrderIdsPreview(orderIds);
+          getNotyf().error(
+            idPreview
+              ? `未找到匹配的订单（${idPreview}），请稍后重试`
+              : "未找到匹配的订单，请稍后重试"
+          );
           return;
         }
 
@@ -328,23 +353,34 @@ export default defineContentScript({
         console.log("[待处理监听] 同步 步骤 4/4：同步到 KST 订单系统");
         try {
           await syncOrdersToKst({ shopId, rows });
-          console.log("[待处理监听] KST 同步成功", {
+          console.log("[待处理监听] KST 同步完成", {
             requestId,
             rowCount: rows.length,
           });
         } catch (syncError) {
+          const msg =
+            syncError instanceof Error ? syncError.message : "同步到 KST 失败，请重试";
           console.error("[待处理监听] KST 同步失败", {
             requestId,
             error: syncError,
-            errorMessage: syncError instanceof Error ? syncError.message : String(syncError),
+            errorMessage: msg,
           });
+          const idPreview = formatOrderIdsPreview(orderIds);
+          getNotyf().error(
+            idPreview ? `${msg}（订单号：${idPreview}）` : msg
+          );
         }
       } catch (error) {
-        console.error("[待处理监听] syncOrdersForMoveToPending 异常", {
+        const msg = error instanceof Error ? error.message : "自动同步失败，请重试";
+        console.error("[待处理监听] 异常", {
           requestId,
           error,
-          errorMessage: error instanceof Error ? error.message : String(error),
+          errorMessage: msg,
         });
+        const idPreview = formatOrderIdsPreview(orderIds);
+        getNotyf().error(
+          idPreview ? `${msg}（订单号：${idPreview}）` : msg
+        );
       }
     };
 
@@ -539,6 +575,12 @@ export default defineContentScript({
               requestId,
               status: data.status,
             });
+            const idPreview = formatOrderIdsPreview(pending.orderIds);
+            getNotyf().error(
+              idPreview
+                ? `Etsy 操作失败，未同步到 KST（订单号：${idPreview}）`
+                : "Etsy 操作失败，未同步到 KST"
+            );
             pendingMoveToNewByRequestId.delete(requestId);
             console.log("[待处理监听] 已从缓存移除", {
               requestId,
@@ -551,6 +593,12 @@ export default defineContentScript({
           const loggedIn = await isLoggedIn();
           if (!loggedIn) {
             console.warn("[待处理监听] 未登录 KST，中断流程", { requestId });
+            const idPreview = formatOrderIdsPreview(pending.orderIds);
+            getNotyf().error(
+              idPreview
+                ? `请先登录 KST 账号，订单将不会自动同步（订单号：${idPreview}）`
+                : "请先登录 KST 账号，订单将不会自动同步"
+            );
             pendingMoveToNewByRequestId.delete(requestId);
             return;
           }
@@ -567,7 +615,7 @@ export default defineContentScript({
             },
           });
 
-          console.log("[待处理监听] 响应 步骤 6/6：调用 syncOrdersForMoveToPending");
+          console.log("[待处理监听] 响应 步骤 6/6：调用");
           await syncOrdersForMoveToPending({
             shopId: pending.shopId,
             targetStateId: pending.targetStateId,
