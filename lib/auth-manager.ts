@@ -7,6 +7,10 @@
 import { browser } from "wxt/browser";
 import { getInfo, login as kstLogin } from "@/api";
 import type { StoredUser } from "@/types/auth";
+import { getNotyf } from "@/lib/notyf";
+import { sendKstProxyRequest } from "@/lib/kst-proxy-client";
+
+const OPEN_LOGIN_PAGE_MESSAGE_TYPE = "OPEN_LOGIN_PAGE" as const;
 
 const STORAGE_KEY = "eomUser";
 const CREDENTIALS_STORAGE_KEY = "eomRememberCredentials";
@@ -124,8 +128,67 @@ export async function clearRememberedCredentials(): Promise<void> {
   await browser.storage.local.remove(CREDENTIALS_STORAGE_KEY);
 }
 
+export type Handle401Result = {
+  autoLoggedIn: boolean;
+  errorMessage?: string;
+};
+
+/**
+ * 统一处理 401（token 过期）：清除登录态，尝试用记住的凭据自动登录
+ * 由 background 在代理请求返回 code 401 时调用
+ */
+export async function handle401(): Promise<Handle401Result> {
+  console.log("[KST] handle401: 清除本地登录态");
+  await browser.storage.local.remove(STORAGE_KEY);
+  const credentials = await getRememberedCredentials();
+  if (!credentials?.username) {
+    console.log("[KST] handle401: 无记住的凭据，需手动登录");
+    return { autoLoggedIn: false, errorMessage: "登录已过期，请重新登录" };
+  }
+  try {
+    console.log("[KST] handle401: 尝试用记住的凭据自动登录");
+    await login(credentials.username, credentials.password);
+    console.log("[KST] handle401: 自动登录成功");
+    return { autoLoggedIn: true };
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : "自动登录失败，请重新登录";
+    console.warn("[KST] handle401: 自动登录失败", e);
+    return { autoLoggedIn: false, errorMessage };
+  }
+}
+
+const GET_INFO_PATH = "/getInfo";
+
+/**
+ * 确保有有效会话：有 token 时请求一次 getInfo，触发 401 时由 proxy 层统一处理（toast + 打开登录页）
+ * 无 token 时轻提示并打开登录页。用于订单页等入口在 onMounted 时做一次登录态校验。
+ */
+export async function ensureSession(): Promise<void> {
+  const token = await getToken();
+  if (!token) {
+      getNotyf().error("未登录，请先登录");
+
+    try {
+      await browser.runtime.sendMessage({ type: OPEN_LOGIN_PAGE_MESSAGE_TYPE });
+    } catch (e) {
+      await openLoginPage();
+    }
+    return;
+  }
+  try {
+    await sendKstProxyRequest<{ code?: number; user?: unknown }>({
+      path: GET_INFO_PATH,
+      method: "GET",
+      token,
+    });
+  } catch {
+    // 401 等已由 sendKstProxyRequest 内 toast + openLoginPage 处理
+  }
+}
+
 /**
  * 打开或聚焦登录页（用于 popup/background 等入口）
+ * 注意：content script 可能无 tabs 权限，应通过 sendMessage 让 background 执行
  */
 export async function openLoginPage(): Promise<void> {
   const loginUrl = browser.runtime.getURL("/login.html");
@@ -140,9 +203,9 @@ export async function openLoginPage(): Promise<void> {
         await browser.windows.update(targetTab.windowId, { focused: true });
       }
     } else {
-      await browser.tabs.create({ url: loginUrl });
+      const newTab = await browser.tabs.create({ url: loginUrl });
     }
   } catch (error) {
-    console.error("openLoginPage error:", error);
+    console.error("openLoginPage ~ error:", error)
   }
 }

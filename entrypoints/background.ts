@@ -3,7 +3,7 @@ import {
   type KstProxyRequest,
 } from "@/lib/kst-proxy-types";
 import { runKstProxyInBackground } from "@/lib/kst-proxy";
-import { openLoginPage } from "@/lib/auth-manager";
+import { openLoginPage, handle401 } from "@/lib/auth-manager";
 
 export default defineBackground(() => {
   console.log("Hello background!", { id: browser.runtime.id });
@@ -30,7 +30,25 @@ export default defineBackground(() => {
           formFields: req.formFields,
           token: req.token,
         })
-          .then((data) => sendResponse({ success: true as const, data }))
+          .then(async (data) => {
+            const body = data as { code?: number; msg?: string };
+            if (body?.code === 401) {
+              console.log("[KST] 检测到 401，执行 handle401");
+              const result = await handle401();
+              console.log("[KST] handle401 结果", {
+                autoLoggedIn: result.autoLoggedIn,
+                errorMessage: result.errorMessage,
+              });
+              sendResponse({
+                success: false as const,
+                error: result.errorMessage ?? body?.msg ?? "登录已过期",
+                code: 401,
+                autoLoggedIn: result.autoLoggedIn,
+              });
+              return;
+            }
+            sendResponse({ success: true as const, data });
+          })
           .catch((err: Error) =>
             sendResponse({
               success: false as const,

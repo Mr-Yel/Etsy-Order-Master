@@ -1,4 +1,4 @@
-import { sendKstProxyRequest } from "@/lib/kst-proxy-client";
+import { kstAuthenticatedRequest } from "@/lib/kst-request";
 import { KST_BASE_URL } from "./constants";
 
 /** 平台订单列表请求参数（三个入参） */
@@ -164,12 +164,12 @@ export const PLATFORM_ORDERS_LIST_PATH = "/system/platform-orders/list";
 
 /**
  * 通过 background 代理调用 KST 平台订单列表接口（用于 content script 等易触发 CORS 的环境）
+ * token 由统一请求层自动注入，401 时由 proxy 层统一处理
  */
 export async function fetchPlatformOrdersListViaProxy(
-  params: PlatformOrdersListParams,
-  token: string
+  params: PlatformOrdersListParams
 ): Promise<PlatformOrdersListResponse> {
-  const data = await sendKstProxyRequest<PlatformOrdersListResponse>({
+  const data = await kstAuthenticatedRequest<PlatformOrdersListResponse>({
     path: PLATFORM_ORDERS_LIST_PATH,
     method: "GET",
     query: {
@@ -177,7 +177,6 @@ export async function fetchPlatformOrdersListViaProxy(
       pageSize: String(params.pageSize),
       platformOrderIds: params.platformOrderIds,
     },
-    token,
   });
   if (data?.code !== 200) {
     const msg = data?.msg ?? "请求失败";
@@ -250,13 +249,13 @@ function fileToBase64(file: File): Promise<string> {
 
 /**
  * 通过 background 代理调用 KST 平台订单导入接口（用于 content script 等易触发 CORS 的环境）
+ * token 由统一请求层自动注入，401 时由 proxy 层统一处理
  */
 export async function fetchPlatformOrdersImportJsonViaProxy(
-  params: PlatformOrdersImportJsonParams,
-  token: string
+  params: PlatformOrdersImportJsonParams
 ): Promise<PlatformOrdersImportJsonResponse> {
   const base64 = await fileToBase64(params.file);
-  const data = await sendKstProxyRequest<PlatformOrdersImportJsonResponse>({
+  const data = await kstAuthenticatedRequest<PlatformOrdersImportJsonResponse>({
     path: PLATFORM_ORDERS_IMPORT_JSON_PATH,
     method: "POST",
     formFile: {
@@ -268,7 +267,6 @@ export async function fetchPlatformOrdersImportJsonViaProxy(
       shopId: params.shopId,
       platformType: params.platformType,
     },
-    token,
   });
   if (data?.code !== 200) {
     const msg = data?.msg ?? "请求失败";

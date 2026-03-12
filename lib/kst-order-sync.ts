@@ -34,8 +34,7 @@ const splitIntoBatches = <T>(items: T[], batchSize: number): T[][] => {
 };
 
 const findExistingPlatformOrderIds = async (
-  allPlatformOrderIds: string[],
-  token: string
+  allPlatformOrderIds: string[]
 ): Promise<Set<string>> => {
   const existingIds = new Set<string>();
   const batches = splitIntoBatches(allPlatformOrderIds, MAX_IDS_PER_REQUEST);
@@ -49,8 +48,7 @@ const findExistingPlatformOrderIds = async (
           pageNum: 1,
           pageSize: batch.length,
           platformOrderIds,
-        },
-        token
+        }
       );
       res.rows.forEach((order) => {
         const id = (order.platformOrderId ?? "").trim();
@@ -123,7 +121,7 @@ export const syncOrdersToKst = async ({
     uniqueOrderIds: allIds.length,
   });
 
-  const existingIds = await findExistingPlatformOrderIds(allIds, token);
+  const existingIds = await findExistingPlatformOrderIds(allIds);
   if (existingIds.size > 0) {
     console.log("[KST] 检测到已同步订单，将跳过这些订单", {
       existingIds: Array.from(existingIds),
@@ -148,14 +146,11 @@ export const syncOrdersToKst = async ({
   const file = buildOrdersExcelFile(rowsToSync);
 
   try {
-    const res = await fetchPlatformOrdersImportJsonViaProxy(
-      {
-        file,
-        shopId: String(shopId),
-        platformType,
-      },
-      token
-    );
+    const res = await fetchPlatformOrdersImportJsonViaProxy({
+      file,
+      shopId: String(shopId),
+      platformType,
+    });
     console.log("[KST] 订单导入接口返回", res);
     getNotyf().success(`已同步 ${rowsToSync.length} 条订单到 KST`);
   } catch (error) {

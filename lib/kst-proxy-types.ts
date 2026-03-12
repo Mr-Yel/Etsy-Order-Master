@@ -33,10 +33,14 @@ export type KstProxySuccessResponse = {
   data: unknown;
 };
 
-/** 代理失败响应 */
+/** 代理失败响应（含 401 时 code、autoLoggedIn） */
 export type KstProxyErrorResponse = {
   success: false;
   error: string;
+  /** 401 时存在，表示 token 过期 */
+  code?: number;
+  /** 401 后是否已用记住的凭据自动登录成功 */
+  autoLoggedIn?: boolean;
 };
 
 export type KstProxyResponse = KstProxySuccessResponse | KstProxyErrorResponse;

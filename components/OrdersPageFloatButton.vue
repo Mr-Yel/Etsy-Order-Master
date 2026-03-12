@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted } from "vue";
 import OrderExportModal from "./OrderExportModal.vue";
+import { ensureSession } from "@/lib/auth-manager";
 
 const showModal = ref(false);
 const targetEl = ref<HTMLElement | null>(null);
@@ -33,6 +34,8 @@ let observer: MutationObserver | null = null;
 let waitTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(() => {
+  void ensureSession();
+
   const toolbar = document.querySelector<HTMLDivElement>(TOOLBAR_SELECTOR);
 
   if (toolbar) {
