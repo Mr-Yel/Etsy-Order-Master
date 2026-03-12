@@ -17,9 +17,11 @@ import {
 import * as XLSX from "xlsx";
 import { syncOrdersToKst } from "@/lib/kst-order-sync";
 import { useAuth } from "@/composables/useAuth";
+import { useNotyf } from "@/composables/useNotyf";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const { isLoggedIn, openLoginPage, loadUser } = useAuth();
+const notyf = useNotyf();
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -147,6 +149,7 @@ function exportSelected() {
 async function syncSelectedToKst() {
   const data = selectedRows.value;
   if (data.length === 0) {
+    notyf.error("请先选择要同步的订单");
     return;
   }
   loading.value = true;
@@ -154,6 +157,7 @@ async function syncSelectedToKst() {
   await loadUser();
   if (!isLoggedIn.value) {
     error.value = "请先登录 KST 账号后再同步订单";
+    notyf.error("请先登录 KST 账号后再同步订单");
     loading.value = false;
     openLoginPage();
     return;
@@ -166,6 +170,7 @@ async function syncSelectedToKst() {
     const etsy = await getEtsyData();
     if (!etsy.success || etsy.shopId == null) {
       console.warn("[KST] 无法获取 shopId，取消同步");
+      notyf.error("无法获取店铺信息，请确保在 Etsy 订单页操作");
       return;
     }
 
@@ -173,9 +178,11 @@ async function syncSelectedToKst() {
       shopId: etsy.shopId,
       rows: data,
     });
-
+    notyf.success(`已同步 ${data.length} 条订单到 KST`);
   } catch (e) {
     console.error("[KST] 同步到 KST 失败", e);
+    const msg = e instanceof Error ? e.message : "同步失败，请重试";
+    notyf.error(msg);
   } finally {
     isSyncingToKst.value = false;
     loading.value = false;
@@ -303,7 +310,7 @@ onMounted(() => {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 2147483647;
+  z-index: 999;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
