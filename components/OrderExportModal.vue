@@ -178,7 +178,6 @@ async function syncSelectedToKst() {
       shopId: etsy.shopId,
       rows: data,
     });
-    notyf.success(`已同步 ${data.length} 条订单到 KST`);
   } catch (e) {
     console.error("[KST] 同步到 KST 失败", e);
     const msg = e instanceof Error ? e.message : "同步失败，请重试";

@@ -1,12 +1,13 @@
 import * as XLSX from "xlsx";
-import type { ExportTableRow } from "@/utils/orders-mapping";
-import {
-  fetchPlatformOrdersListViaProxy,
-  fetchPlatformOrdersImportJsonViaProxy,
-  type PlatformOrdersListResponse,
-} from "@/api";
+import { fetchPlatformOrdersImportJsonViaProxy } from "@/api";
 import { getToken } from "@/lib/auth-manager";
+import {
+  markOrderIdsAsSynced,
+  type ResolvedOrderSyncStatus,
+  resolveOrderSyncStatus,
+} from "@/lib/kst-sync-status";
 import { getNotyf } from "@/lib/notyf";
+import type { ExportTableRow } from "@/utils/orders-mapping";
 
 type SyncOrdersToKstParams = {
   shopId: number;
@@ -15,56 +16,12 @@ type SyncOrdersToKstParams = {
 };
 
 const DEFAULT_PLATFORM_TYPE = "ETSY";
-const MAX_IDS_PER_REQUEST = 80;
 
 const collectOrderIds = (rows: ExportTableRow[]): string[] => {
   const ids = rows
     .map((row) => String(row["Order ID"] ?? "").trim())
     .filter((id) => id.length > 0);
   return Array.from(new Set(ids));
-};
-
-const splitIntoBatches = <T>(items: T[], batchSize: number): T[][] => {
-  if (items.length === 0) return [];
-  const batches: T[][] = [];
-  for (let i = 0; i < items.length; i += batchSize) {
-    batches.push(items.slice(i, i + batchSize));
-  }
-  return batches;
-};
-
-const findExistingPlatformOrderIds = async (
-  allPlatformOrderIds: string[]
-): Promise<Set<string>> => {
-  const existingIds = new Set<string>();
-  const batches = splitIntoBatches(allPlatformOrderIds, MAX_IDS_PER_REQUEST);
-
-  for (const batch of batches) {
-    if (!batch.length) continue;
-    const platformOrderIds = batch.join(",");
-    try {
-      const res: PlatformOrdersListResponse = await fetchPlatformOrdersListViaProxy(
-        {
-          pageNum: 1,
-          pageSize: batch.length,
-          platformOrderIds,
-        }
-      );
-      res.rows.forEach((order) => {
-        const id = (order.platformOrderId ?? "").trim();
-        if (id) {
-          existingIds.add(id);
-        }
-      });
-    } catch (error) {
-      console.warn("[KST] 查询已同步订单失败，将跳过本次批次", {
-        error,
-        platformOrderIds,
-      });
-    }
-  }
-
-  return existingIds;
 };
 
 const buildOrdersExcelFile = (rows: ExportTableRow[]): File => {
@@ -95,52 +52,71 @@ export const syncOrdersToKst = async ({
   platformType = DEFAULT_PLATFORM_TYPE,
 }: SyncOrdersToKstParams): Promise<void> => {
   if (!rows.length) {
-    console.log("[KST] 无选中订单，跳过同步");
+    console.log("[KST] No selected orders, skip sync");
     getNotyf().error("请先选择要同步的订单");
     return;
   }
 
   const token = await getToken();
   if (!token) {
-    console.warn("[KST] 未获取到 KST token，无法同步订单");
+    console.warn("[KST] Missing KST token, cannot sync orders");
     getNotyf().error("请先登录 KST 账号后再同步订单");
     return;
   }
 
   const allIds = collectOrderIds(rows);
   if (!allIds.length) {
-    console.log("[KST] 选中订单中没有有效的 Order ID，跳过同步");
+    console.log("[KST] Selected rows do not contain valid Order ID values");
     getNotyf().error("选中订单中没有有效的 Order ID");
     return;
   }
 
-  console.log("[KST] 准备同步订单到 KST", {
+  console.log("[KST] Preparing order sync", {
     shopId,
     platformType,
     totalSelectedRows: rows.length,
     uniqueOrderIds: allIds.length,
   });
 
-  const existingIds = await findExistingPlatformOrderIds(allIds);
-  if (existingIds.size > 0) {
-    console.log("[KST] 检测到已同步订单，将跳过这些订单", {
-      existingIds: Array.from(existingIds),
+  let syncStatus: ResolvedOrderSyncStatus;
+  try {
+    syncStatus = await resolveOrderSyncStatus(allIds);
+  } catch (error) {
+    console.error("[KST] Failed to resolve order sync status before import", {
+      shopId,
+      platformType,
+      orderIdsPreview: allIds.slice(0, 10),
+      error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+  if (syncStatus.localDuplicateOrderIds.length > 0) {
+    console.log("[KST] Skip orders already stored in local sync cache", {
+      cachedOrderIds: syncStatus.localDuplicateOrderIds,
+    });
+  }
+  if (syncStatus.remoteDuplicateOrderIds.length > 0) {
+    console.log("[KST] Skip orders already found in remote KST records", {
+      remoteDuplicateOrderIds: syncStatus.remoteDuplicateOrderIds,
     });
   }
 
+  const orderIdsToSyncSet = new Set(syncStatus.orderIdsToSync);
   const rowsToSync = rows.filter((row) => {
     const id = String(row["Order ID"] ?? "").trim();
-    return id && !existingIds.has(id);
+    return id && orderIdsToSyncSet.has(id);
   });
 
   if (!rowsToSync.length) {
-    console.log("[KST] 所选订单均已在 KST 中存在，未执行导入");
-    getNotyf().success("所选订单均已在 KST 中存在，无需重复导入");
+    // Duplicate orders are skipped silently to avoid repeated sync and extra user noise.
+    console.log("[KST] All selected orders were skipped by sync status check");
     return;
   }
 
-  console.log("[KST] 需要导入到 KST 的订单", {
-    total: rowsToSync.length,
+  console.log("[KST] Orders that still need import", {
+    totalRowsToSync: rowsToSync.length,
+    orderIds: collectOrderIds(rowsToSync),
   });
 
   const file = buildOrdersExcelFile(rowsToSync);
@@ -151,13 +127,16 @@ export const syncOrdersToKst = async ({
       shopId: String(shopId),
       platformType,
     });
-    console.log("[KST] 订单导入接口返回", res);
+
+    const importedOrderIds = collectOrderIds(rowsToSync);
+    await markOrderIdsAsSynced(importedOrderIds);
+
+    console.log("[KST] Order import response", res);
     getNotyf().success(`已同步 ${rowsToSync.length} 条订单到 KST`);
   } catch (error) {
     const msg =
       error instanceof Error ? error.message : "同步到 KST 失败，请重试";
-    console.error("[KST] 导入订单到 KST 失败", error);
+    console.error("[KST] Failed to import orders into KST", error);
     getNotyf().error(msg);
   }
 };
-

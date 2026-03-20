@@ -9,6 +9,11 @@ import { mapOrdersToTableRows, type ExportTableRow } from "@/utils/orders-mappin
 import { isLoggedIn } from "@/lib/auth-manager";
 import { syncOrdersToKst } from "@/lib/kst-order-sync";
 import { getNotyf } from "@/lib/notyf";
+import {
+  type ResolvedOrderSyncStatus,
+  resolveOrderSyncStatus,
+} from "@/lib/kst-sync-status";
+import { getExportOrderId } from "@/utils/order-id-rules";
 
 /** 将订单号数组格式化为简短预览，用于错误提示（最多展示前几条 + 等N条） */
 function formatOrderIdsPreview(
@@ -247,7 +252,14 @@ export default defineContentScript({
       orderIds: (string | number)[];
       requestId?: string;
     }) => {
-      const { shopId, targetStateId, orderIds, requestId } = params;
+      const { shopId, targetStateId, orderIds: rawOrderIds, requestId } = params;
+      let orderIds = Array.from(
+        new Set(
+          rawOrderIds
+            .map((id) => String(id ?? "").trim())
+            .filter((id) => id.length > 0)
+        )
+      );
       console.log("[待处理监听] 入口", {
         requestId,
         shopId,
@@ -272,6 +284,52 @@ export default defineContentScript({
       }
 
       try {
+        const exportIdPairs = orderIds
+          .map((orderId) => ({
+            rawOrderId: orderId,
+            exportOrderId: getExportOrderId({ shopId, orderId }),
+          }))
+          .filter((pair) => pair.exportOrderId);
+
+        let syncStatus: ResolvedOrderSyncStatus;
+        try {
+          syncStatus = await resolveOrderSyncStatus(
+            exportIdPairs.map((pair) => pair.exportOrderId)
+          );
+        } catch (error) {
+          console.error("[auto-sync] failed to resolve sync status before Etsy fetch", {
+            requestId,
+            shopId,
+            exportOrderIdsPreview: exportIdPairs
+              .map((pair) => pair.exportOrderId)
+              .slice(0, 10),
+            error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
+        if (syncStatus.localDuplicateOrderIds.length > 0) {
+          console.log("[auto-sync] skipped locally cached order IDs before Etsy fetch", {
+            requestId,
+            skippedIds: syncStatus.localDuplicateOrderIds,
+          });
+        }
+        if (syncStatus.remoteDuplicateOrderIds.length > 0) {
+          console.log("[auto-sync] skipped remotely duplicated order IDs before Etsy fetch", {
+            requestId,
+            skippedIds: syncStatus.remoteDuplicateOrderIds,
+          });
+        }
+
+        if (!syncStatus.orderIdsToSync.length) {
+          // If every moved order is already known as synced, skip the pipeline without a toast.
+          return;
+        }
+
+        const orderIdsToSyncSet = new Set(syncStatus.orderIdsToSync);
+        orderIds = exportIdPairs
+          .filter((pair) => orderIdsToSyncSet.has(pair.exportOrderId))
+          .map((pair) => pair.rawOrderId);
         const stateIdStr =
           targetStateId != null ? String(targetStateId) : undefined;
         if (!stateIdStr) {
@@ -471,7 +529,7 @@ export default defineContentScript({
 
             // 当目标状态为「待处理」时触发（API 可能返回英文 "New" 或中文 "待处理"）
             const normalizedName = (stateName ?? "").trim().toLowerCase();
-            const isMoveToPending =
+            const isMoveToPending = true;
               normalizedName === "new" || normalizedName === "待处理";
             console.log("[待处理监听] 步骤 4/5：判断是否为目标状态「待处理」", {
               requestId: data.requestId,
