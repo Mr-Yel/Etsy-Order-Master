@@ -3,6 +3,8 @@ import {
   ensureEtsyContextFromMainWorld,
 } from "@/lib/etsy-context";
 
+export type { OrderState };
+
 /**
  * 通过统一的 EtsyContext 服务从页面主世界获取 Etsy 数据
  * 保持原有返回结构（shopId、orderStates、error），方便现有调用方复用

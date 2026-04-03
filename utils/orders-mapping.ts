@@ -6,6 +6,7 @@ import { getExportOrderId } from "./order-id-rules";
  */
 export const EXPORT_COLUMNS = [
   "Sale Date",
+  "Date Paid",
   "Order ID",
   "Buyer User ID",
   "Full Name",
@@ -50,6 +51,8 @@ type RawOrder = {
   order_date?: number;
   buyer_id?: number;
   fulfillment?: {
+    actual_ship_date?: number | null;
+    expected_ship_date?: number;
     to_address?: {
       name?: string;
       first_line?: string;
@@ -61,6 +64,7 @@ type RawOrder = {
     };
   };
   payment?: {
+    payment_date?: number;
     payment_method?: string;
     is_in_person_payment?: boolean;
     cost_breakdown?: {
@@ -93,6 +97,16 @@ function formatSaleDate(ts: number | undefined): string {
   if (ts == null) return "";
   const d = new Date(ts * 1000);
   const y = d.getUTCFullYear().toString().slice(-2);
+  const m = (d.getUTCMonth() + 1).toString().padStart(2, "0");
+  const day = d.getUTCDate().toString().padStart(2, "0");
+  return `${m}/${day}/${y}`;
+}
+
+/** Unix 时间戳（秒）按 UTC → MM/DD/YYYY */
+function formatDateUTC(ts: number | undefined | null): string {
+  if (ts == null) return "";
+  const d = new Date(ts * 1000);
+  const y = d.getUTCFullYear().toString();
   const m = (d.getUTCMonth() + 1).toString().padStart(2, "0");
   const day = d.getUTCDate().toString().padStart(2, "0");
   return `${m}/${day}/${y}`;
@@ -200,6 +214,7 @@ export function mapOrdersToTableRows(
 
     return {
       "Sale Date": formatSaleDate(order.order_date),
+      "Date Paid": formatDateUTC(order.payment?.payment_date),
       "Order ID": getExportOrderId({
         shopId,
         orderId: order.order_id,
@@ -210,7 +225,9 @@ export function mapOrdersToTableRows(
       "Last Name": lastName,
       "Number of Items": String(numItems),
       "Payment Method": "Credit Card",
-      "Date Shipped": "",
+      "Date Shipped": formatDateUTC(
+        order.fulfillment?.actual_ship_date ?? order.fulfillment?.expected_ship_date
+      ),
       "Street 1": safeStr(addr?.first_line),
       "Street 2": safeStr(addr?.second_line),
       "Ship City": safeStr(addr?.city),

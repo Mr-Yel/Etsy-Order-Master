@@ -41,7 +41,6 @@ export default defineConfig({
       {
         resources: ['page-inject.js'],
         matches: ['*://*.etsy.com/*'],
-        use_dynamic_url: true,
       },
     ],
     
