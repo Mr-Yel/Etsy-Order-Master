@@ -27,7 +27,7 @@
 | 表格字段 | 结论 | 接口路径 / 取值说明 |
 |----------|------|----------------------|
 | Sale Date | 能 | `orders[].order_date`（Unix 时间戳，按 **UTC** 计算日期并格式化为 MM/DD/YY，避免本地时区导致日期偏移） |
-| Order ID | 能 | `orders[].order_id`；导出时加前缀，前缀代表对应的店铺，SLA、SLB、SLC，如 "SLC" 就是 3店 → "SLC3984074404" |
+| Order ID | 能 | `orders[].order_id`；导出时加前缀，前缀代表对应的店铺，SLA、SLB、SLC，如 "SLC" 就是 3店 → "SLC3984074404" （已取消，不要前缀，对应代码已处理） |
 | Buyer User ID | 能 | 用 `orders[].buyer_id` 匹配 `buyers[]`，取 `buyers[].username`（如 "fr1giobobuffwzh9"） |
 | Full Name | 能 | `orders[].fulfillment.to_address.name`（收货人全名） |
 | First Name | 能 | 从 `to_address.name` 按空格拆分取首段 |

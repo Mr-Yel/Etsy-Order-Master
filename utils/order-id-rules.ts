@@ -9,10 +9,11 @@ type OrderIdRule = {
 };
 
 const rules: OrderIdRule[] = [
-  {
-    match: ({ shopId }) => String(shopId ?? "") === "26833914",
-    transform: ({ orderId }) => `SLC${String(orderId ?? "")}`,
-  },
+  // 订单的前缀要求，26年4月份前缀要求都取消了，所以这个规则也取消了
+  // {
+  //   match: ({ shopId }) => String(shopId ?? "") === "26833914",
+  //   transform: ({ orderId }) => `SLC${String(orderId ?? "")}`,
+  // },
 ];
 
 export const getExportOrderId = (ctx: OrderIdRuleContext): string => {
