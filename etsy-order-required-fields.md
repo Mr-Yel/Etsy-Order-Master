@@ -26,6 +26,7 @@
 | **Ship Zipcode** | 收货邮编 | 必须 | **接口**：订单列表 `orders[].fulfillment.to_address.zip`。**DOM**：详情 `div.address .zip`。 |
 | **Ship Country** | 收货国家 | 必须 | **接口**：订单列表 `orders[].fulfillment.to_address.country`。**DOM**：详情 `div.address .country-name`。 |
 | **SKU** | 库存单位/商品SKU | 必须 | **接口**：订单列表 `orders[].transactions[].product.product_identifier`，多商品逗号拼接。**DOM**：详情/列表 "SKU: " 后文本或 Receipt 表格内 SKU 单元格。 |
+| **Item Name** | 商品名称 | 必须 | **接口**：订单列表 `orders[].transactions[].product.title`，多商品逗号拼接。**DOM**：商品标题区域文本；若页面节点稳定，可取对应标题元素。 |
 | **Number of Items** | 商品数量 | 必须 | **接口**：订单列表 `orders[].transactions[].quantity` 求和。**DOM**：详情 "1 Item(s)" / "1 item" 或 `table.b-xs-0 tbody tr` 数量；列表 "1 item" 文本。 |
 | **Currency** | 货币 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.total_cost.currency_code`；或收益接口 `shop_currency`。**DOM**：从金额前的 "$" 或 Order total 推断；美国站可默认 USD。 |
 | **Order Value** | 订单价值 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.items_cost`（value 为分需 ÷100）；或收益接口 `buyer_paid_details.items_price`。**DOM**：详情 Receipt "Item total" 行右侧金额。 |
@@ -57,14 +58,14 @@
 ## 三、获取方式优先级建议
 
 1. **以接口为主**：能走 **Orders_OrdersCollection（订单列表）** 的字段一律用接口，避免依赖页面结构和多页点击。
-2. **必须字段**：订单列表接口可提供全部必须字段（Order ID、Sale Date、Full Name/Buyer、地址、SKU、Number of Items、Currency、Order Value）；无需 DOM 即可完成导入所需数据。
+2. **必须字段**：订单列表接口可提供全部必须字段（Order ID、Sale Date、Full Name/Buyer、地址、SKU、Item Name、Number of Items、Currency、Order Value）；无需 DOM 即可完成导入所需数据。
 3. **净额与费用**：Card Processing Fees、Order Net 仅收益接口 **Etsy_Order_Fulfillment_EarningsDetails** 有，若需“可能需要的”金额类字段，再按 order_id 请求该接口。
 4. **DOM 作为兜底**：接口不可用或需在详情页内一键导出时，按上表 DOM 列选择器取数；地址、金额、Status 等需在详情页取。
 
 ---
 
-## 四、必须字段汇总（14 项）
+## 四、必须字段汇总（15 项）
 
-Order ID、Sale Date、Full Name、Buyer、Street 1、Street 2、Ship City、Ship State、Ship Zipcode、Ship Country、SKU、Number of Items、Currency、Order Value。
+Order ID、Sale Date、Full Name、Buyer、Street 1、Street 2、Ship City、Ship State、Ship Zipcode、Ship Country、SKU、Item Name、Number of Items、Currency、Order Value。
 
 以上 14 项在目标系统中用于订单主表、收货信息与订单明细，**订单列表接口单接口即可满足**，无需详情页 DOM 或收益接口。

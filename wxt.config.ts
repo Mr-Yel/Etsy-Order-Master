@@ -58,12 +58,7 @@ function appLogConfigPlugin() {
       const baseUrl =
         readOptionalConfigValue("app-log-base-url.txt", "EOM_APP_LOG_BASE_URL") ||
         "https://huangxiangkun.uno/etsy-log";
-      const enabled =
-        enabledRaw === "false"
-          ? "false"
-          : clientId && clientSecret
-            ? "true"
-            : "false";
+      const enabled = enabledRaw === "false" ? "false" : "true";
 
       return {
         define: {

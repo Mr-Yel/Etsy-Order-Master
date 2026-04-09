@@ -40,6 +40,7 @@ export const etsyOrderTableFields = {
   'InPerson Discount': null, // 线下折扣
   'InPerson Location': null, // 线下地点
   'SKU': null, // 库存单位/商品SKU
+  'Item Name': null, // 商品名称
 }
 
 /**
@@ -83,4 +84,5 @@ export const etsyOrderFieldLabels = {
   'InPerson Discount': '线下折扣',
   'InPerson Location': '线下地点',
   'SKU': '库存单位/商品SKU',
+  'Item Name': '商品名称',
 }

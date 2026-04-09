@@ -2,7 +2,7 @@ import { getExportOrderId } from "./order-id-rules";
 
 /**
  * 将订单列表接口返回的 orders + buyers 映射为导出表行
- * 字段与顺序以 etsy-order-api-fields-mapping.md 第一节为准（36 列）
+ * 字段与顺序以 etsy-order-api-fields-mapping.md 第一节为准（38 列）
  */
 export const EXPORT_COLUMNS = [
   "Sale Date",
@@ -42,6 +42,7 @@ export const EXPORT_COLUMNS = [
   "InPerson Discount",
   "InPerson Location",
   "SKU",
+  "Item Name",
 ] as const;
 
 export type ExportTableRow = Record<(typeof EXPORT_COLUMNS)[number], string>;
@@ -80,7 +81,7 @@ type RawOrder = {
   };
   transactions?: Array<{
     quantity?: number;
-    product?: { product_identifier?: string };
+    product?: { product_identifier?: string; title?: string };
   }>;
   [key: string]: unknown;
 };
@@ -202,6 +203,11 @@ export function mapOrdersToTableRows(
         ?.map((t) => t.product?.product_identifier)
         .filter(Boolean)
         .join(", ") ?? "";
+    const itemNames =
+      order.transactions
+        ?.map((t) => t.product?.title)
+        .filter(Boolean)
+        .join(", ") ?? "";
 
     // const isInPerson = order.payment?.is_in_person_payment ?? false;
     // const paymentType = toPaymentType(
@@ -259,6 +265,7 @@ export function mapOrdersToTableRows(
       "InPerson Discount": "",
       "InPerson Location": "",
       SKU: skus,
+      "Item Name": itemNames,
     };
   });
 }

@@ -9,7 +9,7 @@ import {
   resolveOrderSyncStatus,
 } from "@/lib/kst-sync-status";
 import { getNotyf } from "@/lib/notyf";
-import type { ExportTableRow } from "@/utils/orders-mapping";
+import { EXPORT_COLUMNS, type ExportTableRow } from "@/utils/orders-mapping";
 
 type SyncOrdersToKstParams = {
   shopId: number;
@@ -76,7 +76,7 @@ async function confirmImportedOrderIds(orderIds: string[]): Promise<string[]> {
 }
 
 const buildOrdersExcelFile = (rows: ExportTableRow[]): File => {
-  const ws = XLSX.utils.json_to_sheet(rows);
+  const ws = XLSX.utils.json_to_sheet(rows, { header: [...EXPORT_COLUMNS] });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Orders");
   const arrayBuffer = XLSX.write(wb, {

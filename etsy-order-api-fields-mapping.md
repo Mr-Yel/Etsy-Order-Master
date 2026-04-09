@@ -2,9 +2,11 @@
 
 对照导出目标系统的表格字段，记录各接口返回值与导出表字段的对应关系。仅用于接口数据 → 表格字段的映射，不涉及 DOM。
 
-**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU。
+**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU, Item Name。
 
 **SKU**：以列表接口 `transactions[].product.product_identifier` 的值为准（业务侧若存在另一套 SKU 由下游处理，导出取 Etsy 列表值）。
+
+**Item Name**：以列表接口 `transactions[].product.title` 的值为准，对应 Etsy 页面商品标题。
 
 ---
 
@@ -12,7 +14,7 @@
 
 | 接口 | 说明 | 主要用途 |
 |------|------|----------|
-| **Orders_OrdersCollection** | 订单列表（orders_search） | 绝大部分导出字段，含 SKU、姓名、地址、金额等 |
+| **Orders_OrdersCollection** | 订单列表（orders_search） | 绝大部分导出字段，含 SKU、Item Name、姓名、地址、金额等 |
 | **Etsy_Order_Fulfillment_EarningsDetails** | 订单收益/费用明细 | 订单净额、卡处理费、Adjusted 相关 |
 | **Common_Convo** | 会话详情 | 买家邮箱、订单号/日期（从 subject 解析）、买家名（备用） |
 
@@ -62,6 +64,7 @@
 | InPerson Discount | 能 |暂时固定为 空 |
 | InPerson Location | 能 |暂时固定为 空 |
 | SKU | 能 | `orders[].transactions[].product.product_identifier`（**取值以列表接口为准**，如 "QUECABSW023P02"；多商品可逗号拼接或按行展开） |
+| Item Name | 能 | `orders[].transactions[].product.title`（如 "Custom Beach Towels with Picture..."；多商品可逗号拼接） |
 
 **Coupon Code / Coupon Details 为何有版本二**：接口本身是订单维，一个订单只有一个 `sellermarketing_coupons[0]`。当下游或展示按「一行一 transaction」展开时，订单级字段会被复制到每一行，导出/汇总时再按订单合并，常用分号连接成一条字符串，即版本二（按 transaction 数重复 + `";"` 连接）。当前导出实现采用**版本二**。
 
@@ -91,7 +94,7 @@
 | Adjusted Card Processing Fees | 不确定 | `refunds_details.seller_refunds` 等 |
 | Adjusted Net Order Amount | 不确定 | 可从退款与 total 推算，语义需与业务确认 |
 
-EarningsDetails **不包含**：Order ID（需请求参数）、Buyer User ID、Full Name、First/Last Name、地址、**SKU**、Number of Items、Payment Method、Order Type、Payment Type、Sale Date 等；**SKU 仅从列表接口取**。
+EarningsDetails **不包含**：Order ID（需请求参数）、Buyer User ID、Full Name、First/Last Name、地址、**SKU**、**Item Name**、Number of Items、Payment Method、Order Type、Payment Type、Sale Date 等；**SKU / Item Name 仅从列表接口取**。
 
 ---
 
@@ -99,7 +102,7 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Buyer User ID、
 
 | 目标 | 建议接口组合 |
 |------|----------------|
-| 仅列表接口 | 可覆盖除 Card Processing Fees、Order Net、Adjusted Card Processing Fees、Adjusted Net Order Amount 外的所有目标字段；SKU、姓名、地址、金额等均以列表为准。 |
+| 仅列表接口 | 可覆盖除 Card Processing Fees、Order Net、Adjusted Card Processing Fees、Adjusted Net Order Amount 外的所有目标字段；SKU、Item Name、姓名、地址、金额等均以列表为准。 |
 | 完整导出（含净额与费用） | **订单列表接口** + 按 order_id 请求 **EarningsDetails**，用列表填大部分字段，用详情填 Card Processing Fees、Order Net 及 Adjusted 相关。Order Net 当前固定为「暂时无法获取」，未从详情取。 |
 
 ---
@@ -146,3 +149,4 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Buyer User ID、
 | InPerson Discount | 固定 空 | — | |
 | InPerson Location | 固定 空 | — | |
 | SKU | ✓ transactions[].product.product_identifier | — | 取值以列表为准 |
+| Item Name | ✓ transactions[].product.title | — | 取值以列表为准 |
