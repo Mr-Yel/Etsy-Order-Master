@@ -1,6 +1,7 @@
 import { fetchPlatformOrdersListViaProxy } from "@/api";
 import {
   getSyncedOrderIdSet,
+  pruneSyncedOrderCache,
   rememberSyncedOrderIds,
   type SyncedOrderIdSource,
 } from "@/lib/kst-sync-cache";
@@ -102,6 +103,7 @@ export async function resolveOrderSyncStatus(
     };
   }
 
+  await pruneSyncedOrderCache();
   const syncedOrderIdSet = await getSyncedOrderIdSet();
   const localDuplicateOrderIds = normalizedOrderIds.filter((orderId) =>
     syncedOrderIdSet.has(orderId)

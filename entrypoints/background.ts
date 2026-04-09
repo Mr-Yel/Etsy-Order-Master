@@ -6,6 +6,7 @@ import {
   enqueueAppLogFromEvent,
   logBackgroundRuntimeStarted,
 } from "@/lib/app-log-background";
+import { pruneSyncedOrderCache } from "@/lib/kst-sync-cache";
 import {
   KST_PROXY_MESSAGE_TYPE,
   type KstProxyRequest,
@@ -16,6 +17,9 @@ import { openLoginPage, handle401 } from "@/lib/auth-manager";
 export default defineBackground(() => {
   console.log("Hello background!", { id: browser.runtime.id });
   logBackgroundRuntimeStarted();
+  void pruneSyncedOrderCache().catch((error) => {
+    console.warn("[KST] Failed to prune synced order cache on background start", error);
+  });
 
   browser.runtime.onMessage.addListener(
     (
