@@ -171,6 +171,12 @@ async function signHeaders(body: PreparedAppLogEntry): Promise<Record<string, st
 
 async function uploadEntry(entry: PreparedAppLogEntry): Promise<void> {
   const headers = await signHeaders(entry);
+  const uploadUrl = `${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`;
+  console.log("[APP-LOG] Uploading log entry", {
+    orderNo: entry.orderNo,
+    uploadUrl,
+    contentLength: entry.content.length,
+  });
   const response = await fetch(`${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`, {
     method: "POST",
     headers: {
@@ -178,6 +184,12 @@ async function uploadEntry(entry: PreparedAppLogEntry): Promise<void> {
       ...headers,
     },
     body: JSON.stringify(entry),
+  });
+
+  console.log("[APP-LOG] Upload response received", {
+    orderNo: entry.orderNo,
+    status: response.status,
+    ok: response.ok,
   });
 
   if (!response.ok) {
@@ -193,6 +205,14 @@ async function uploadEntry(entry: PreparedAppLogEntry): Promise<void> {
 
 async function shouldUploadLogs(): Promise<boolean> {
   if (!APP_LOG_BASE_URL || !APP_LOG_CLIENT_ID || !APP_LOG_CLIENT_SECRET) {
+    console.warn("[APP-LOG] Upload disabled by missing config", {
+      hasBaseUrl: Boolean(APP_LOG_BASE_URL),
+      hasClientId: Boolean(APP_LOG_CLIENT_ID),
+      hasClientSecret: Boolean(APP_LOG_CLIENT_SECRET),
+      uploadUrl: APP_LOG_BASE_URL
+        ? `${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`
+        : "",
+    });
     if (!hasLoggedConfigWarning) {
       hasLoggedConfigWarning = true;
       console.warn(
@@ -202,7 +222,20 @@ async function shouldUploadLogs(): Promise<boolean> {
     return false;
   }
 
-  return isAppLogEnabled();
+  const enabled = await isAppLogEnabled();
+  console.log("[APP-LOG] Upload gate evaluated", {
+    enabled,
+    hasBaseUrl: Boolean(APP_LOG_BASE_URL),
+    hasClientId: Boolean(APP_LOG_CLIENT_ID),
+    hasClientSecret: Boolean(APP_LOG_CLIENT_SECRET),
+    uploadUrl: `${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`,
+  });
+  if (!enabled) {
+    console.warn("[APP-LOG] Upload disabled by local toggle", {
+      storageKey: "eomAppLogEnabled",
+    });
+  }
+  return enabled;
 }
 
 async function drainQueue(): Promise<void> {
@@ -232,12 +265,24 @@ export async function enqueueAppLogFromEvent(
   sender?: AppLogSender
 ): Promise<void> {
   if (!(await shouldUploadLogs())) {
+    console.log("[APP-LOG] Skip enqueue because upload is disabled", {
+      event: payload.event,
+      orderNo: payload.orderNo ?? APP_LOG_SYSTEM_ORDER_NO,
+    });
     return;
   }
 
-  pendingEntries.push({
+  const entry = {
     orderNo: getNormalizedOrderNo(payload.orderNo),
     content: buildLogContent(payload, sender),
+  };
+  pendingEntries.push(entry);
+  console.log("[APP-LOG] Enqueued log entry", {
+    event: payload.event,
+    orderNo: entry.orderNo,
+    queueSize: pendingEntries.length,
+    senderUrl: sender?.url ?? "",
+    senderOrigin: sender?.origin ?? "",
   });
 
   void drainQueue();
