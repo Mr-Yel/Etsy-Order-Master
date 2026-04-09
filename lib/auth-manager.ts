@@ -20,6 +20,22 @@ export type RememberedCredentials = {
   password: string;
 };
 
+export type AuthDebugSnapshot = {
+  runtimeId?: string;
+  hasDevToken: boolean;
+  devTokenLength: number;
+  storageHasUser: boolean;
+  storageHasToken: boolean;
+  storageTokenLength: number;
+  storageUserName: string;
+  storageDeptName: string;
+  hasRememberedCredentials: boolean;
+  rememberedUsername: string;
+  rememberedPasswordLength: number;
+  effectiveHasUser: boolean;
+  effectiveHasToken: boolean;
+};
+
 /** 构建时由 dev-token.txt 注入的本地免登录 token（有则用，不区分 dev/build） */
 const getDevToken = (): string | null => {
   const t = import.meta.env.VITE_EOM_DEV_TOKEN;
@@ -126,6 +142,55 @@ export async function setRememberedCredentials(
  */
 export async function clearRememberedCredentials(): Promise<void> {
   await browser.storage.local.remove(CREDENTIALS_STORAGE_KEY);
+}
+
+export async function getAuthDebugSnapshot(): Promise<AuthDebugSnapshot> {
+  const devToken = getDevToken();
+  let storedUser: StoredUser | null = null;
+  let rememberedCredentials: RememberedCredentials | null = null;
+
+  try {
+    const result = await browser.storage.local.get([
+      STORAGE_KEY,
+      CREDENTIALS_STORAGE_KEY,
+    ]);
+    const rawUser = result[STORAGE_KEY] as StoredUser | undefined;
+    const rawCredentials = result[
+      CREDENTIALS_STORAGE_KEY
+    ] as RememberedCredentials | undefined;
+
+    storedUser = rawUser ?? null;
+    rememberedCredentials =
+      rawCredentials?.username != null
+        ? {
+            username: rawCredentials.username,
+            password: rawCredentials.password ?? "",
+          }
+        : null;
+  } catch (error) {
+    console.warn("[KST] getAuthDebugSnapshot: failed to read storage", error);
+  }
+
+  const effectiveUser =
+    devToken != null && devToken.trim()
+      ? await getStoredUser()
+      : storedUser;
+
+  return {
+    runtimeId: browser.runtime.id,
+    hasDevToken: Boolean(devToken),
+    devTokenLength: devToken?.length ?? 0,
+    storageHasUser: Boolean(storedUser),
+    storageHasToken: Boolean(storedUser?.token),
+    storageTokenLength: storedUser?.token?.length ?? 0,
+    storageUserName: storedUser?.name ?? "",
+    storageDeptName: storedUser?.deptName ?? "",
+    hasRememberedCredentials: Boolean(rememberedCredentials?.username),
+    rememberedUsername: rememberedCredentials?.username ?? "",
+    rememberedPasswordLength: rememberedCredentials?.password?.length ?? 0,
+    effectiveHasUser: Boolean(effectiveUser),
+    effectiveHasToken: Boolean(effectiveUser?.token),
+  };
 }
 
 export type Handle401Result = {

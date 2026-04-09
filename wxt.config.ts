@@ -25,16 +25,69 @@ function devTokenPlugin() {
   };
 }
 
+function readOptionalConfigValue(fileName: string, envName: string): string {
+  const envValue = process.env[envName];
+  if (typeof envValue === "string" && envValue.trim()) {
+    return envValue.trim();
+  }
+
+  const file = join(process.cwd(), fileName);
+  if (!existsSync(file)) return "";
+  try {
+    return readFileSync(file, "utf-8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function appLogConfigPlugin() {
+  return {
+    name: "eom-app-log-config",
+    config() {
+      const enabledRaw =
+        process.env.EOM_APP_LOG_ENABLED?.trim() ||
+        readOptionalConfigValue("app-log-enabled.txt", "EOM_APP_LOG_ENABLED");
+      const clientId = readOptionalConfigValue(
+        "app-log-client-id.txt",
+        "EOM_APP_LOG_CLIENT_ID"
+      );
+      const clientSecret = readOptionalConfigValue(
+        "app-log-client-secret.txt",
+        "EOM_APP_LOG_CLIENT_SECRET"
+      );
+      const baseUrl =
+        readOptionalConfigValue("app-log-base-url.txt", "EOM_APP_LOG_BASE_URL") ||
+        "https://huangxiangkun.uno/etsy-log";
+      const enabled =
+        enabledRaw === "false"
+          ? "false"
+          : clientId && clientSecret
+            ? "true"
+            : "false";
+
+      return {
+        define: {
+          "import.meta.env.VITE_EOM_APP_LOG_ENABLED": JSON.stringify(enabled),
+          "import.meta.env.VITE_EOM_APP_LOG_BASE_URL": JSON.stringify(baseUrl),
+          "import.meta.env.VITE_EOM_APP_LOG_CLIENT_ID": JSON.stringify(clientId),
+          "import.meta.env.VITE_EOM_APP_LOG_CLIENT_SECRET":
+            JSON.stringify(clientSecret),
+        },
+      };
+    },
+  };
+}
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ["@wxt-dev/module-vue"],
   vite: () => ({
-    plugins: [devTokenPlugin()],
+    plugins: [devTokenPlugin(), appLogConfigPlugin()],
   }),
   manifest: {
     // 权限配置
     permissions: ['storage', 'tabs'],
-    host_permissions: ['*://*.etsy.com/*', 'https://kstgl.kesiteng.cn/*'],
+    host_permissions: ['*://*.etsy.com/*', 'https://kstgl.kesiteng.cn/*', 'https://huangxiangkun.uno/*'],
     
     // Web 可访问资源
     web_accessible_resources: [

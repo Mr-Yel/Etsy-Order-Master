@@ -177,6 +177,10 @@ async function syncSelectedToKst() {
     await syncOrdersToKst({
       shopId: etsy.shopId,
       rows: data,
+      logContext: {
+        source: "manual_order_export_modal",
+        pageUrl: location.href,
+      },
     });
   } catch (e) {
     console.error("[KST] 同步到 KST 失败", e);

@@ -1,12 +1,13 @@
 import { createApp } from "vue";
 import JSZip from "jszip";
 import ContentScriptWrapper from "@/components/ContentScriptWrapper.vue";
+import { emitAppLog } from "@/lib/app-log";
 import {
   fetchOrderList,
   getOrderListBaseParams,
 } from "@/composables/useFetchOrderList";
 import { mapOrdersToTableRows, type ExportTableRow } from "@/utils/orders-mapping";
-import { isLoggedIn } from "@/lib/auth-manager";
+import { getAuthDebugSnapshot, isLoggedIn } from "@/lib/auth-manager";
 import { syncOrdersToKst } from "@/lib/kst-order-sync";
 import { getNotyf } from "@/lib/notyf";
 import {
@@ -24,6 +25,32 @@ function formatOrderIdsPreview(
   const parts = orderIds.slice(0, maxShow).map((id) => String(id));
   const preview = parts.join("、");
   return orderIds.length > maxShow ? `${preview} 等${orderIds.length}条` : preview;
+}
+
+function emitLogsForOrderIds(
+  orderIds: Array<string | number | null | undefined>,
+  event: string,
+  data: Record<string, unknown>,
+  source = "auto_move_orders"
+): void {
+  const normalizedOrderIds = Array.from(
+    new Set(
+      orderIds
+        .map((orderId) => String(orderId ?? "").trim())
+        .filter((orderId) => orderId.length > 0)
+    )
+  );
+  const occurredAt = new Date().toISOString();
+
+  normalizedOrderIds.forEach((orderId) => {
+    void emitAppLog({
+      event,
+      orderNo: orderId,
+      source,
+      occurredAt,
+      data,
+    });
+  });
 }
 
 /**
@@ -231,7 +258,10 @@ export default defineContentScript({
       return { shopId: cachedShopId, orderStates: cachedOrderStates };
     };
 
-    // 记录「准备将订单移动到待处理」的请求信息，待响应成功后再同步到 KST
+    // 记录已捕获到的 move-orders 请求，待 Etsy 响应成功后再同步到 KST。
+    // 注意：当前业务规则不是“仅待处理/New 才同步”，而是“任意 move-orders 状态切换都触发自动同步”。
+    // 重复同步由本地缓存 kstSyncedOrderIds + KST 远端查重共同拦截，因此这里不要再按状态名收窄触发条件。
+    // 如果未来要改这条规则，必须先和业务方确认，而不是按变量名或历史注释直接修改。
     const pendingMoveToNewByRequestId = new Map<
       string,
       {
@@ -243,7 +273,11 @@ export default defineContentScript({
     >();
 
     /**
-     * 当捕获到将订单状态修改为「待处理」时，直接同步到 KST 订单系统（不导出 Excel，与弹窗「同步到 KST」流程一致）
+     * 当捕获到 move-orders 且 Etsy 响应成功时，直接同步到 KST 订单系统
+     * （不导出 Excel，与弹窗「同步到 KST」流程一致）。
+     *
+     * 重要：无论订单被移动到哪个状态，只要是 move-orders，就会进入这条自动同步链路。
+     * 不要把这里改回“只在 New/待处理 时同步”，否则会导致切换到处理中等状态时不再自动同步。
      */
     const syncOrdersForMoveToPending = async (params: {
       shopId?: number;
@@ -313,16 +347,46 @@ export default defineContentScript({
             requestId,
             skippedIds: syncStatus.localDuplicateOrderIds,
           });
+          emitLogsForOrderIds(
+            syncStatus.localDuplicateOrderIds,
+            "auto_sync_skipped_local_duplicate",
+            {
+              requestId,
+              shopId,
+              targetStateId,
+              targetStateName: params.targetStateName ?? "",
+            }
+          );
         }
         if (syncStatus.remoteDuplicateOrderIds.length > 0) {
           console.log("[auto-sync] skipped remotely duplicated order IDs before Etsy fetch", {
             requestId,
             skippedIds: syncStatus.remoteDuplicateOrderIds,
           });
+          emitLogsForOrderIds(
+            syncStatus.remoteDuplicateOrderIds,
+            "auto_sync_skipped_remote_duplicate",
+            {
+              requestId,
+              shopId,
+              targetStateId,
+              targetStateName: params.targetStateName ?? "",
+            }
+          );
         }
 
         if (!syncStatus.orderIdsToSync.length) {
           // If every moved order is already known as synced, skip the pipeline without a toast.
+          emitLogsForOrderIds(
+            exportIdPairs.map((pair) => pair.exportOrderId),
+            "auto_sync_skipped_all_duplicates",
+            {
+              requestId,
+              shopId,
+              targetStateId,
+              targetStateName: params.targetStateName ?? "",
+            }
+          );
           return;
         }
 
@@ -374,6 +438,16 @@ export default defineContentScript({
             missingCount: missingIds.length,
             missingIdsPreview: missingIds.slice(0, 10),
           });
+          emitLogsForOrderIds(
+            missingIds,
+            "auto_sync_missing_from_etsy_list",
+            {
+              requestId,
+              shopId,
+              targetStateId,
+              targetStateName: params.targetStateName ?? "",
+            }
+          );
         }
 
         console.log("[待处理监听] 同步 步骤 2/4：过滤结果", {
@@ -410,7 +484,17 @@ export default defineContentScript({
 
         console.log("[待处理监听] 同步 步骤 4/4：同步到 KST 订单系统");
         try {
-          await syncOrdersToKst({ shopId, rows });
+          await syncOrdersToKst({
+            shopId,
+            rows,
+            logContext: {
+              source: "auto_move_orders",
+              requestId,
+              targetStateId,
+              targetStateName: params.targetStateName,
+              pageUrl: location.href,
+            },
+          });
           console.log("[待处理监听] KST 同步完成", {
             requestId,
             rowCount: rows.length,
@@ -423,6 +507,20 @@ export default defineContentScript({
             error: syncError,
             errorMessage: msg,
           });
+          emitLogsForOrderIds(
+            orderIds,
+            "auto_sync_pipeline_failed",
+            {
+              requestId,
+              shopId,
+              targetStateId,
+              targetStateName: params.targetStateName ?? "",
+              error:
+                syncError instanceof Error
+                  ? { message: syncError.message, stack: syncError.stack ?? "" }
+                  : String(syncError),
+            }
+          );
           const idPreview = formatOrderIdsPreview(orderIds);
           getNotyf().error(
             idPreview ? `${msg}（订单号：${idPreview}）` : msg
@@ -435,6 +533,20 @@ export default defineContentScript({
           error,
           errorMessage: msg,
         });
+        emitLogsForOrderIds(
+          orderIds,
+          "auto_sync_pipeline_exception",
+          {
+            requestId,
+            shopId,
+            targetStateId,
+            targetStateName: params.targetStateName ?? "",
+            error:
+              error instanceof Error
+                ? { message: error.message, stack: error.stack ?? "" }
+                : String(error),
+          }
+        );
         const idPreview = formatOrderIdsPreview(orderIds);
         getNotyf().error(
           idPreview ? `${msg}（订单号：${idPreview}）` : msg
@@ -526,25 +638,39 @@ export default defineContentScript({
               orderIdsCount: orderIds.length,
               orderIdsPreview: orderIds.slice(0, 5),
             });
+            emitLogsForOrderIds(
+              orderIds,
+              "order_state_change_requested",
+              {
+                requestId: data.requestId,
+                orderStateId,
+                stateName,
+                requestUrl: data.url ?? "",
+                requestMethod: data.method ?? "",
+                requestBody: typeof data.body === "string" ? data.body : "",
+                pageUrl: location.href,
+              }
+            );
 
-            // 当目标状态为「待处理」时触发（API 可能返回英文 "New" 或中文 "待处理"）
+            // 重要业务规则：
+            // 1. 任意 move-orders 状态切换都触发自动同步，不按目标状态过滤。
+            // 2. 重复由本地缓存 + KST 远端查重拦截，而不是靠状态判断避免。
+            // 3. 这里曾被误改成只允许 New/待处理 触发，导致切换到处理中时 cacheSize=0、响应阶段直接结束。
+            // 后续维护请保留该行为，除非业务规则明确变化。
             const normalizedName = (stateName ?? "").trim().toLowerCase();
-            const isMoveToPending = true;
-              normalizedName === "new" || normalizedName === "待处理";
+            const shouldTriggerAutoSync = true;
             console.log("[待处理监听] 步骤 4/5：判断是否为目标状态「待处理」", {
               requestId: data.requestId,
               stateName,
               normalizedName,
-              isMoveToPending,
+              shouldTriggerAutoSync,
               matchReason:
-                isMoveToPending
-                  ? normalizedName === "new"
-                    ? "匹配英文 New"
-                    : "匹配中文 待处理"
+                shouldTriggerAutoSync
+                  ? "当前配置：所有状态变更都触发自动同步"
                   : "不匹配",
             });
 
-            if (isMoveToPending) {
+            if (shouldTriggerAutoSync) {
               if (data.requestId) {
                 pendingMoveToNewByRequestId.set(data.requestId, {
                   shopId,
@@ -607,6 +733,19 @@ export default defineContentScript({
             console.log("[待处理监听] 未找到对应请求缓存（可能非待处理或 requestId 不一致）", {
               requestId,
             });
+            void emitAppLog({
+              event: "order_state_change_response_without_pending",
+              orderNo: "__SYSTEM__",
+              source: "auto_move_orders",
+              occurredAt: new Date().toISOString(),
+              data: {
+                requestId,
+                status: data.status,
+                ok: data.ok,
+                responseBody: typeof data.body === "string" ? data.body : "",
+                pageUrl: location.href,
+              },
+            });
             return;
           }
           console.log("[待处理监听] 已找到缓存", {
@@ -633,6 +772,19 @@ export default defineContentScript({
               requestId,
               status: data.status,
             });
+            emitLogsForOrderIds(
+              pending.orderIds,
+              "order_state_change_failed",
+              {
+                requestId,
+                status: data.status,
+                ok: data.ok,
+                responseBody: typeof data.body === "string" ? data.body : "",
+                targetStateId: pending.targetStateId,
+                targetStateName: pending.targetStateName ?? "",
+                pageUrl: location.href,
+              }
+            );
             const idPreview = formatOrderIdsPreview(pending.orderIds);
             getNotyf().error(
               idPreview
@@ -650,7 +802,26 @@ export default defineContentScript({
           console.log("[待处理监听] 响应 步骤 4/6：检查 KST 登录状态");
           const loggedIn = await isLoggedIn();
           if (!loggedIn) {
-            console.warn("[待处理监听] 未登录 KST，中断流程", { requestId });
+            const authDebugSnapshot = await getAuthDebugSnapshot();
+            console.warn("[待处理监听] 未登录 KST，中断流程", {
+              requestId,
+              authDebugSnapshot,
+              pendingOrderIdsPreview: pending.orderIds.slice(0, 10),
+              pendingOrderIdsCount: pending.orderIds.length,
+              currentUrl: location.href,
+              runtimeId: browser.runtime.id,
+            });
+            emitLogsForOrderIds(
+              pending.orderIds,
+              "auto_sync_skipped_not_logged_in",
+              {
+                requestId,
+                targetStateId: pending.targetStateId,
+                targetStateName: pending.targetStateName ?? "",
+                authDebugSnapshot,
+                pageUrl: location.href,
+              }
+            );
             const idPreview = formatOrderIdsPreview(pending.orderIds);
             getNotyf().error(
               idPreview
@@ -661,6 +832,19 @@ export default defineContentScript({
             return;
           }
           console.log("[待处理监听] 已登录 KST，继续");
+          emitLogsForOrderIds(
+            pending.orderIds,
+            "order_state_change_succeeded",
+            {
+              requestId,
+              status: data.status,
+              ok: data.ok,
+              responseBody: typeof data.body === "string" ? data.body : "",
+              targetStateId: pending.targetStateId,
+              targetStateName: pending.targetStateName ?? "",
+              pageUrl: location.href,
+            }
+          );
 
           pendingMoveToNewByRequestId.delete(requestId);
           console.log("[待处理监听] 响应 步骤 5/6：清理缓存并触发同步到 KST", {

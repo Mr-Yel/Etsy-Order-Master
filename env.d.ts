@@ -4,4 +4,8 @@
  */
 interface ImportMetaEnv {
   readonly VITE_EOM_DEV_TOKEN?: string;
+  readonly VITE_EOM_APP_LOG_ENABLED?: string;
+  readonly VITE_EOM_APP_LOG_BASE_URL?: string;
+  readonly VITE_EOM_APP_LOG_CLIENT_ID?: string;
+  readonly VITE_EOM_APP_LOG_CLIENT_SECRET?: string;
 }

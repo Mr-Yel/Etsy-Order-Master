@@ -1,4 +1,12 @@
 import {
+  APP_LOG_MESSAGE_TYPE,
+  type AppLogMessage,
+} from "@/lib/app-log";
+import {
+  enqueueAppLogFromEvent,
+  logBackgroundRuntimeStarted,
+} from "@/lib/app-log-background";
+import {
   KST_PROXY_MESSAGE_TYPE,
   type KstProxyRequest,
 } from "@/lib/kst-proxy-types";
@@ -7,15 +15,28 @@ import { openLoginPage, handle401 } from "@/lib/auth-manager";
 
 export default defineBackground(() => {
   console.log("Hello background!", { id: browser.runtime.id });
+  logBackgroundRuntimeStarted();
 
   browser.runtime.onMessage.addListener(
     (
       message: unknown,
-      _sender: unknown,
+      sender: {
+        url?: string;
+        origin?: string;
+        frameId?: number;
+        tab?: { id?: number };
+      },
       sendResponse: (response: unknown) => void
     ) => {
       if ((message as { type?: string })?.type === "OPEN_LOGIN_PAGE") {
         void openLoginPage();
+        return false;
+      }
+
+      if ((message as { type?: string })?.type === APP_LOG_MESSAGE_TYPE) {
+        const appLogMessage = message as AppLogMessage;
+        void enqueueAppLogFromEvent(appLogMessage.payload, sender);
+        sendResponse({ success: true as const });
         return false;
       }
 

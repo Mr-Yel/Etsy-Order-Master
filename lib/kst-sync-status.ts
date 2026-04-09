@@ -2,6 +2,7 @@ import { fetchPlatformOrdersListViaProxy } from "@/api";
 import {
   getSyncedOrderIdSet,
   rememberSyncedOrderIds,
+  type SyncedOrderIdSource,
 } from "@/lib/kst-sync-cache";
 
 const MAX_IDS_PER_REQUEST = 80;
@@ -47,8 +48,8 @@ function splitIntoBatches<T>(items: T[], batchSize: number): T[][] {
   return batches;
 }
 
-async function findRemoteDuplicateOrderIds(
-  orderIds: string[]
+export async function findExistingRemoteOrderIds(
+  orderIds: Array<string | number | null | undefined>
 ): Promise<string[]> {
   const normalizedOrderIds = normalizeOrderIds(orderIds);
   if (!normalizedOrderIds.length) return [];
@@ -109,12 +110,15 @@ export async function resolveOrderSyncStatus(
     (orderId) => !syncedOrderIdSet.has(orderId)
   );
 
-  const remoteDuplicateOrderIds = await findRemoteDuplicateOrderIds(
+  const remoteDuplicateOrderIds = await findExistingRemoteOrderIds(
     orderIdsMissingFromLocal
   );
   if (remoteDuplicateOrderIds.length) {
     // Backfill local cache so future checks can short-circuit without remote IO.
-    await rememberSyncedOrderIds(remoteDuplicateOrderIds);
+    await rememberSyncedOrderIds(
+      remoteDuplicateOrderIds,
+      "remote_duplicate_check"
+    );
   }
 
   const duplicateOrderIdSet = new Set<string>([
@@ -133,7 +137,8 @@ export async function resolveOrderSyncStatus(
 }
 
 export async function markOrderIdsAsSynced(
-  orderIds: Array<string | number>
+  orderIds: Array<string | number>,
+  source: SyncedOrderIdSource = "import_verified"
 ): Promise<void> {
-  await rememberSyncedOrderIds(orderIds);
+  await rememberSyncedOrderIds(orderIds, source);
 }
