@@ -16,7 +16,7 @@
 | 字段名 | 中文 | 是否必须 | 获取方式 |
 |--------|------|----------|----------|
 | **Order ID** | 订单ID | 必须 | **接口**：订单列表 `orders[].order_id`。**DOM**：列表页 `input[type="checkbox"][name]` 的 name/value，或 `a[href*="order_id="]`；详情页 `#order-details-order-info a[href*="order_id"]`。 |
-| **Transaction ID** | 交易ID | 必须 | **接口**：优先取订单列表 `orders[].transactions[].transaction_id`，多商品按 transaction 顺序逗号拼接；若明细缺失可回退 `orders[].transaction_ids`。**DOM**：详情页商品行、包裹项或链接参数中可能出现 transaction_id，但应以接口为准。 |
+| **Transaction ID** | 交易ID | 必须 | **接口**：优先取订单列表 `orders[].transactions[].transaction_id`；当前展示/导出按 **一行一个 transaction**，同一订单多商品拆成多行；若明细缺失可回退 `orders[].transaction_ids`。**DOM**：详情页商品行、包裹项或链接参数中可能出现 transaction_id，但应以接口为准。 |
 | **Sale Date** | 销售日期 | 必须 | **接口**：订单列表 `orders[].order_date`（Unix 时间戳转日期）。**DOM**：含 "Ordered" 的 `.text-body-smaller` 解析日期；列表页 "Ordered MM/DD/YYYY" 文本。 |
 | **Full Name** | 全名 | 必须 | **接口**：订单列表 用 `orders[].buyer_id` 匹配 `buyers[]`，取 `buyers[].name`。**DOM**：详情 `div.address .name` 或 dropdown 内 `span[data-test-id="unsanitize"]`；列表同类型 dropdown。 |
 | **Buyer** | 买家 | 必须 | 与 Full Name 同源，取同一值即可。 |
@@ -26,9 +26,9 @@
 | **Ship State** | 收货州/省 | 必须 | **接口**：订单列表 `orders[].fulfillment.to_address.state`。**DOM**：详情 `div.address .state`。 |
 | **Ship Zipcode** | 收货邮编 | 必须 | **接口**：订单列表 `orders[].fulfillment.to_address.zip`。**DOM**：详情 `div.address .zip`。 |
 | **Ship Country** | 收货国家 | 必须 | **接口**：订单列表 `orders[].fulfillment.to_address.country`。**DOM**：详情 `div.address .country-name`。 |
-| **SKU** | 库存单位/商品SKU | 必须 | **接口**：订单列表 `orders[].transactions[].product.product_identifier`，多商品逗号拼接。**DOM**：详情/列表 "SKU: " 后文本或 Receipt 表格内 SKU 单元格。 |
-| **Item Name** | 商品名称 | 必须 | **接口**：订单列表 `orders[].transactions[].product.title`，多商品逗号拼接。**DOM**：商品标题区域文本；若页面节点稳定，可取对应标题元素。 |
-| **Number of Items** | 商品数量 | 必须 | **接口**：订单列表 `orders[].transactions[].quantity` 按 transaction 顺序输出，多商品用逗号拼接，如 `2, 1, 4`。**DOM**：详情 "1 Item(s)" / "1 item" 或 `table.b-xs-0 tbody tr` 数量；列表 "1 item" 文本。 |
+| **SKU** | 库存单位/商品SKU | 必须 | **接口**：订单列表 `orders[].transactions[].product.product_identifier`；当前展示/导出按 **一行一个 transaction**，每行取当前 transaction 的 SKU。**DOM**：详情/列表 "SKU: " 后文本或 Receipt 表格内 SKU 单元格。 |
+| **Item Name** | 商品名称 | 必须 | **接口**：订单列表 `orders[].transactions[].product.title`；当前展示/导出按 **一行一个 transaction**，每行取当前 transaction 的商品名。**DOM**：商品标题区域文本；若页面节点稳定，可取对应标题元素。 |
+| **Number of Items** | 商品数量 | 必须 | **接口**：订单列表 `orders[].transactions[].quantity`；当前展示/导出按 **一行一个 transaction**，每行取当前 transaction 的数量。**DOM**：详情 "1 Item(s)" / "1 item" 或 `table.b-xs-0 tbody tr` 数量；列表 "1 item" 文本。 |
 | **Currency** | 货币 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.total_cost.currency_code`；或收益接口 `shop_currency`。**DOM**：从金额前的 "$" 或 Order total 推断；美国站可默认 USD。 |
 | **Order Value** | 订单价值 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.items_cost`（value 为分需 ÷100）；或收益接口 `buyer_paid_details.items_price`。**DOM**：详情 Receipt "Item total" 行右侧金额。 |
 | **Buyer User ID** | 买家用户ID | 可能需要的 | **接口**：订单列表 用 `order.buyer_id` 匹配 `buyers[]`，取 `buyers[].buyer_id` 或 `buyers[].username`（Guest 无 username）。**DOM**：详情 `a[href*="buyer_id="]` 的 href 解析 buyer_id。 |

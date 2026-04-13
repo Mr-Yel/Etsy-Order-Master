@@ -38,6 +38,25 @@ const selectedRows = computed(() =>
   rows.value.filter((_, i) => selected.value.has(i))
 );
 
+const groupedRowMeta = computed(() => {
+  let currentGroup = -1;
+  let lastOrderId = "";
+
+  return rows.value.map((row, index) => {
+    const orderId = String(row["Order ID"] ?? "");
+    const isNewGroup = index === 0 || orderId !== lastOrderId;
+    if (isNewGroup) {
+      currentGroup += 1;
+      lastOrderId = orderId;
+    }
+
+    return {
+      groupIndex: currentGroup,
+      isGroupStart: isNewGroup,
+    };
+  });
+});
+
 const isAllSelected = computed(() => {
   if (rows.value.length === 0) return false;
   return rows.value.every((_, i) => selected.value.has(i));
@@ -267,7 +286,15 @@ onMounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(row, i) in rows" :key="i">
+              <tr
+                v-for="(row, i) in rows"
+                :key="i"
+                :class="[
+                  'table-row',
+                  groupedRowMeta[i]?.groupIndex % 2 === 0 ? 'table-row-group-even' : 'table-row-group-odd',
+                  { 'table-row-group-start': groupedRowMeta[i]?.isGroupStart },
+                ]"
+              >
                 <td class="col-check">
                   <input
                     type="checkbox"
@@ -285,7 +312,7 @@ onMounted(() => {
       </div>
 
       <div class="modal-footer">
-        <span>已选 {{ selectedRows.length }} 条订单</span>
+        <span>已选 {{ selectedRows.length }} 条明细</span>
        <div>
         <button
           type="button"
@@ -465,6 +492,18 @@ onMounted(() => {
   padding: 8px 10px;
   text-align: left;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.table-row-group-even td {
+  background: #fcfcfd;
+}
+
+.table-row-group-odd td {
+  background: #f7fafc;
+}
+
+.table-row-group-start td {
+  border-top: 2px solid #cbd5e1;
 }
 
 .table th {

@@ -48,6 +48,12 @@ export const EXPORT_COLUMNS = [
 
 export type ExportTableRow = Record<(typeof EXPORT_COLUMNS)[number], string>;
 
+type RawTransaction = {
+  quantity?: number;
+  transaction_id?: number;
+  product?: { product_identifier?: string; title?: string };
+};
+
 type RawOrder = {
   order_id: number;
   transaction_ids?: number[];
@@ -81,11 +87,7 @@ type RawOrder = {
     };
     sellermarketing_coupons?: Array<{ code?: string; percentage?: number }>;
   };
-  transactions?: Array<{
-    quantity?: number;
-    transaction_id?: number;
-    product?: { product_identifier?: string; title?: string };
-  }>;
+  transactions?: RawTransaction[];
   [key: string]: unknown;
 };
 
@@ -184,7 +186,7 @@ export function mapOrdersToTableRows(
     if (b.buyer_id != null) buyerMap.set(b.buyer_id, b);
   });
 
-  return orders.map((order) => {
+  return orders.flatMap((order) => {
     const buyer =
       order.buyer_id != null ? buyerMap.get(order.buyer_id) : undefined;
     const addr = order.fulfillment?.to_address;
@@ -193,90 +195,69 @@ export function mapOrdersToTableRows(
     const cost = order.payment?.cost_breakdown;
     const coupons = order.payment?.sellermarketing_coupons ?? [];
     const firstCoupon = coupons[0];
-    const transactionCount = Math.max(1, order.transactions?.length ?? 1);
-    const couponCodeRaw = firstCoupon?.code ?? "";
-    const couponDetailsRaw = "% off";
-    const couponCode = Array(transactionCount).fill(couponCodeRaw).join(";");
-    const couponDetails = Array(transactionCount).fill(couponDetailsRaw).join(";");
-
-    const itemQuantities =
-      order.transactions?.map((t) => String(t.quantity ?? 0)).join(", ") ?? "0";
-    const transactionIds =
-      order.transactions
-        ?.map((t) => t.transaction_id)
-        .filter((id): id is number => id != null)
-        .join(", ") ||
-      order.transaction_ids?.join(", ") ||
-      "";
-    const skus =
-      order.transactions
-        ?.map((t) => t.product?.product_identifier)
-        .filter(Boolean)
-        .join(", ") ?? "";
-    const itemNames =
-      order.transactions
-        ?.map((t) => t.product?.title)
-        .filter(Boolean)
-        .join(", ") ?? "";
-
-    // const isInPerson = order.payment?.is_in_person_payment ?? false;
-    // const paymentType = toPaymentType(
-    //   order.payment?.payment_method,
-    //   isInPerson
-    // );
-
+    const couponCode = firstCoupon?.code ?? "";
+    const couponDetails = formatCouponDetails(firstCoupon?.percentage);
     const earnings = order.order_id != null ? earningsByOrderId?.[order.order_id] : undefined;
     const cardProcessingFees = formatProcessingFee(earnings?.fees_and_credits_details?.processing_fee);
+    const fallbackTransactionIds = order.transaction_ids ?? [];
+    const transactions: RawTransaction[] =
+      order.transactions != null && order.transactions.length > 0
+        ? order.transactions
+        : [{}];
 
-    return {
-      "Sale Date": formatSaleDate(order.order_date),
-      "Date Paid": formatDateUTC(order.payment?.payment_date),
-      "Order ID": getExportOrderId({
-        shopId,
-        orderId: order.order_id,
-      }),
-      "Transaction ID": transactionIds,
-      "Buyer User ID": safeStr(buyer?.username),
-      "Full Name": fullName,
-      "First Name": firstName,
-      "Last Name": lastName,
-      "Number of Items": itemQuantities,
-      "Payment Method": "Credit Card",
-      "Date Shipped": formatDateUTC(
-        order.fulfillment?.actual_ship_date ?? order.fulfillment?.expected_ship_date
-      ),
-      "Street 1": safeStr(addr?.first_line),
-      "Street 2": safeStr(addr?.second_line),
-      "Ship City": safeStr(addr?.city),
-      "Ship State": safeStr(addr?.state),
-      "Ship Zipcode": safeStr(addr?.zip),
-      "Ship Country": safeStr(addr?.country),
-      Currency: cost?.total_cost?.currency_code ?? cost?.items_cost?.currency_code ?? "",
-      "Order Value": formatCents(cost?.items_cost?.value),
-      "Coupon Code": couponCode,
-      "Coupon Details": couponDetails,
-      "Discount Amount": formatCents(cost?.discount?.value),
-      "Shipping Discount": formatCents(cost?.shipping_discount?.value),
-      Shipping: formatCents(cost?.shipping_cost?.value),
-      // "Sales Tax": formatCents(cost?.tax_cost?.value),
-      "Sales Tax": "0",
-      "Order Total": formatCents(cost?.total_cost?.value),
-      Status: "",
-      "Card Processing Fees": cardProcessingFees,
-      "Order Net": "暂时无法获取",
-      "Adjusted Order Total": "0",
-      "Adjusted Card Processing Fees": "0",
-      "Adjusted Net Order Amount": "0",
-      Buyer: fullName,
-      "Order Type": "online",
-      // Payment Type 版本一：使用 toPaymentType(payment_method, is_in_person)
-      // "Payment Type": toPaymentType(order.payment?.payment_method, order.payment?.is_in_person_payment ?? false),
-      // Payment Type 版本二（当前导出）：统一写为 online_cc
-      "Payment Type": "online_cc",
-      "InPerson Discount": "",
-      "InPerson Location": "",
-      SKU: skus,
-      "Item Name": itemNames,
-    };
+    return transactions.map((transaction, index) => {
+      const fallbackTransactionId = fallbackTransactionIds[index];
+
+      return {
+        "Sale Date": formatSaleDate(order.order_date),
+        "Date Paid": formatDateUTC(order.payment?.payment_date),
+        "Order ID": getExportOrderId({
+          shopId,
+          orderId: order.order_id,
+        }),
+        "Transaction ID": safeStr(transaction.transaction_id ?? fallbackTransactionId),
+        "Buyer User ID": safeStr(buyer?.username),
+        "Full Name": fullName,
+        "First Name": firstName,
+        "Last Name": lastName,
+        "Number of Items": safeStr(transaction.quantity ?? ""),
+        "Payment Method": "Credit Card",
+        "Date Shipped": formatDateUTC(
+          order.fulfillment?.actual_ship_date ?? order.fulfillment?.expected_ship_date
+        ),
+        "Street 1": safeStr(addr?.first_line),
+        "Street 2": safeStr(addr?.second_line),
+        "Ship City": safeStr(addr?.city),
+        "Ship State": safeStr(addr?.state),
+        "Ship Zipcode": safeStr(addr?.zip),
+        "Ship Country": safeStr(addr?.country),
+        Currency: cost?.total_cost?.currency_code ?? cost?.items_cost?.currency_code ?? "",
+        "Order Value": formatCents(cost?.items_cost?.value),
+        "Coupon Code": couponCode,
+        "Coupon Details": couponDetails,
+        "Discount Amount": formatCents(cost?.discount?.value),
+        "Shipping Discount": formatCents(cost?.shipping_discount?.value),
+        Shipping: formatCents(cost?.shipping_cost?.value),
+        // "Sales Tax": formatCents(cost?.tax_cost?.value),
+        "Sales Tax": "0",
+        "Order Total": formatCents(cost?.total_cost?.value),
+        Status: "",
+        "Card Processing Fees": cardProcessingFees,
+        "Order Net": "暂时无法获取",
+        "Adjusted Order Total": "0",
+        "Adjusted Card Processing Fees": "0",
+        "Adjusted Net Order Amount": "0",
+        Buyer: fullName,
+        "Order Type": "online",
+        // Payment Type 版本一：使用 toPaymentType(payment_method, is_in_person)
+        // "Payment Type": toPaymentType(order.payment?.payment_method, order.payment?.is_in_person_payment ?? false),
+        // Payment Type 版本二（当前导出）：统一写为 online_cc
+        "Payment Type": "online_cc",
+        "InPerson Discount": "",
+        "InPerson Location": "",
+        SKU: safeStr(transaction.product?.product_identifier),
+        "Item Name": safeStr(transaction.product?.title),
+      };
+    });
   });
 }

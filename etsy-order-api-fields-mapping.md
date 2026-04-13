@@ -30,12 +30,12 @@
 |----------|------|----------------------|
 | Sale Date | 能 | `orders[].order_date`（Unix 时间戳，按 **UTC** 计算日期并格式化为 MM/DD/YY，避免本地时区导致日期偏移） |
 | Order ID | 能 | `orders[].order_id`；导出时加前缀，前缀代表对应的店铺，SLA、SLB、SLC，如 "SLC" 就是 3店 → "SLC3984074404" （已取消，不要前缀，对应代码已处理） |
-| Transaction ID | 能 | 优先取 `orders[].transactions[].transaction_id`，按 transaction 顺序用逗号拼接；若明细数组缺失可回退 `orders[].transaction_ids` |
+| Transaction ID | 能 | 优先取 `orders[].transactions[].transaction_id`；当前展示/导出按 **一行一个 transaction**，同一订单多商品会拆成多行；若明细数组缺失可回退 `orders[].transaction_ids` |
 | Buyer User ID | 能 | 用 `orders[].buyer_id` 匹配 `buyers[]`，取 `buyers[].username`（如 "fr1giobobuffwzh9"） |
 | Full Name | 能 | `orders[].fulfillment.to_address.name`（收货人全名） |
 | First Name | 能 | 从 `to_address.name` 按空格拆分取首段 |
 | Last Name | 能 | 从 `to_address.name` 按空格拆分取其余部分（多词 last name 需约定规则） |
-| Number of Items | 能 | `orders[].transactions[].quantity` 按 transaction 顺序取值；多商品用逗号拼接，如 `2, 1, 4` |
+| Number of Items | 能 | `orders[].transactions[].quantity`；当前展示/导出按 **一行一个 transaction**，每行填当前 transaction 的数量 |
 | Payment Method | 能 | 暂时固定为 'Credit Card' |
 | Date Shipped | 能 | 暂时固定为 空 |
 | Street 1 | 能 | `orders[].fulfillment.to_address.first_line` |
@@ -46,8 +46,8 @@
 | Ship Country | 能 | `orders[].fulfillment.to_address.country` |
 | Currency | 能 | `orders[].payment.cost_breakdown.total_cost.currency_code`（如 "USD"） |
 | Order Value | 能 | `orders[].payment.cost_breakdown.items_cost.value` ÷ 100（或 transactions 金额汇总） |
-| Coupon Code | 能 | **版本一**：`orders[].payment.sellermarketing_coupons[0].code`，订单维度取一次（无优惠时数组为空）。**版本二**：同一 code 按 `orders[].transactions.length` 重复，用 `";"` 连接（如 4 条 transaction → `"15DISCOUNT0309;15DISCOUNT0309;15DISCOUNT0309;15DISCOUNT0309"`）。 |
-| Coupon Details | 能 | **版本一**：`sellermarketing_coupons[0].percentage` 拼成如 "15% off"、"% off"，订单维度取一次。**版本二**：固定为 `"% off"`，按 `transactions.length` 重复后用 `";"` 连接。 |
+| Coupon Code | 能 | `orders[].payment.sellermarketing_coupons[0].code`，订单维度字段；当前展示/导出按 **一行一个 transaction**，同一订单拆出的每一行重复该值 |
+| Coupon Details | 能 | `sellermarketing_coupons[0].percentage` 拼成如 "15% off"；订单维度字段；当前展示/导出按 **一行一个 transaction**，同一订单拆出的每一行重复该值 |
 | Discount Amount | 能 | `orders[].payment.cost_breakdown.discount.value` ÷ 100 |
 | Shipping Discount | 能 | `orders[].payment.cost_breakdown.shipping_discount.value` ÷ 100 |
 | Shipping | 能 | `orders[].payment.cost_breakdown.shipping_cost.value` ÷ 100 |
@@ -67,7 +67,7 @@
 | SKU | 能 | `orders[].transactions[].product.product_identifier`（**取值以列表接口为准**，如 "QUECABSW023P02"；多商品可逗号拼接或按行展开） |
 | Item Name | 能 | `orders[].transactions[].product.title`（如 "Custom Beach Towels with Picture..."；多商品可逗号拼接） |
 
-**Coupon Code / Coupon Details 为何有版本二**：接口本身是订单维，一个订单只有一个 `sellermarketing_coupons[0]`。当下游或展示按「一行一 transaction」展开时，订单级字段会被复制到每一行，导出/汇总时再按订单合并，常用分号连接成一条字符串，即版本二（按 transaction 数重复 + `";"` 连接）。当前导出实现采用**版本二**。
+**当前展示/导出策略**：按「一行一个 transaction」展开。同一订单如果有多个商品，会按 `transaction_id` 拆成多行；订单级字段（如 Coupon Code、Coupon Details、地址、Order Total）会在这些行中重复，商品级字段（如 Transaction ID、SKU、Item Name、Number of Items）则逐行对应当前 transaction。
 
 ---
 
@@ -116,12 +116,12 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Transaction ID�
 |----------|----------|-----------------|------|
 | Sale Date | ✓ order_date | — | 转成 MM/DD/YY 等 |
 | Order ID | ✓ order_id | — | 导出加前缀 SLA/SLB/SLC |
-| Transaction ID | ✓ transactions[].transaction_id / transaction_ids[] | — | 多商品按 transaction 顺序逗号拼接 |
+| Transaction ID | ✓ transactions[].transaction_id / transaction_ids[] | — | 当前按一行一个 transaction 展示/导出 |
 | Buyer User ID | ✓ buyers[].username | — | 按 buyer_id 匹配 |
 | Full Name | ✓ to_address.name | — | 收货人全名 |
 | First Name | ✓ to_address.name 拆分 | — | 首段 |
 | Last Name | ✓ to_address.name 拆分 | — | 其余 |
-| Number of Items | ✓ transactions[].quantity 按顺序逗号拼接 | — | 多商品示例：`2, 1, 4` |
+| Number of Items | ✓ transactions[].quantity | — | 当前按一行一个 transaction 展示/导出 |
 | Payment Method | 固定 'Credit Card' | — | |
 | Date Shipped | 固定 空 | — | |
 | Street 1 | ✓ to_address.first_line | — | |
@@ -132,8 +132,8 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Transaction ID�
 | Ship Country | ✓ to_address.country | — | |
 | Currency | ✓ cost_breakdown.total_cost.currency_code | ✓ shop_currency / total_paid | |
 | Order Value | ✓ cost_breakdown.items_cost.value ÷100 | ✓ items_price | |
-| Coupon Code | ✓ 列表：版本一取一次 / 版本二按 transactions 数重复用 ";" 连接 | ✓ shop_promotions[0].name | 当前导出用版本二 |
-| Coupon Details | ✓ 列表：版本一 "15% off" 等 / 版本二固定 "% off" 按 transactions 重复 ";" 连接 | ✓ shop_promotions 拼 "% off" | 当前导出用版本二 |
+| Coupon Code | ✓ sellermarketing_coupons[0].code | ✓ shop_promotions[0].name | 当前按一行一个 transaction 展示/导出，同订单多行重复 |
+| Coupon Details | ✓ sellermarketing_coupons[0].percentage → "15% off" | ✓ shop_promotions 拼 "% off" | 当前按一行一个 transaction 展示/导出，同订单多行重复 |
 | Discount Amount | ✓ cost_breakdown.discount.value ÷100 | ✓ shop_coupon_discount_amount | |
 | Shipping Discount | ✓ cost_breakdown.shipping_discount.value ÷100 | ✓ discounted_shipping_cost | |
 | Shipping | ✓ cost_breakdown.shipping_cost.value ÷100 | ✓ shipping_price | |
