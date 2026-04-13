@@ -6,6 +6,7 @@ export const etsyOrderTableFields = {
   'Sale Date': null, // 销售日期
   'Date Paid': null, // 付款日期
   'Order ID': null, // 订单ID
+  'Transaction ID': null, // 交易ID
   'Buyer User ID': null, // 买家用户ID
   'Full Name': null, // 全名
   'First Name': null, // 名字
@@ -50,6 +51,7 @@ export const etsyOrderFieldLabels = {
   'Sale Date': '销售日期',
   'Date Paid': '付款日期',
   'Order ID': '订单ID',
+  'Transaction ID': '交易ID',
   'Buyer User ID': '买家用户ID',
   'Full Name': '全名',
   'First Name': '名字',

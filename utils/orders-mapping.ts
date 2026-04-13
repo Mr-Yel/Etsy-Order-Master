@@ -2,12 +2,13 @@ import { getExportOrderId } from "./order-id-rules";
 
 /**
  * 将订单列表接口返回的 orders + buyers 映射为导出表行
- * 字段与顺序以 etsy-order-api-fields-mapping.md 第一节为准（38 列）
+ * 字段与顺序以 etsy-order-api-fields-mapping.md 第一节为准
  */
 export const EXPORT_COLUMNS = [
   "Sale Date",
   "Date Paid",
   "Order ID",
+  "Transaction ID",
   "Buyer User ID",
   "Full Name",
   "First Name",
@@ -49,6 +50,7 @@ export type ExportTableRow = Record<(typeof EXPORT_COLUMNS)[number], string>;
 
 type RawOrder = {
   order_id: number;
+  transaction_ids?: number[];
   order_date?: number;
   buyer_id?: number;
   fulfillment?: {
@@ -81,6 +83,7 @@ type RawOrder = {
   };
   transactions?: Array<{
     quantity?: number;
+    transaction_id?: number;
     product?: { product_identifier?: string; title?: string };
   }>;
   [key: string]: unknown;
@@ -196,8 +199,15 @@ export function mapOrdersToTableRows(
     const couponCode = Array(transactionCount).fill(couponCodeRaw).join(";");
     const couponDetails = Array(transactionCount).fill(couponDetailsRaw).join(";");
 
-    const numItems =
-      order.transactions?.reduce((s, t) => s + (t.quantity ?? 0), 0) ?? 0;
+    const itemQuantities =
+      order.transactions?.map((t) => String(t.quantity ?? 0)).join(", ") ?? "0";
+    const transactionIds =
+      order.transactions
+        ?.map((t) => t.transaction_id)
+        .filter((id): id is number => id != null)
+        .join(", ") ||
+      order.transaction_ids?.join(", ") ||
+      "";
     const skus =
       order.transactions
         ?.map((t) => t.product?.product_identifier)
@@ -225,11 +235,12 @@ export function mapOrdersToTableRows(
         shopId,
         orderId: order.order_id,
       }),
+      "Transaction ID": transactionIds,
       "Buyer User ID": safeStr(buyer?.username),
       "Full Name": fullName,
       "First Name": firstName,
       "Last Name": lastName,
-      "Number of Items": String(numItems),
+      "Number of Items": itemQuantities,
       "Payment Method": "Credit Card",
       "Date Shipped": formatDateUTC(
         order.fulfillment?.actual_ship_date ?? order.fulfillment?.expected_ship_date

@@ -2,7 +2,7 @@
 
 对照导出目标系统的表格字段，记录各接口返回值与导出表字段的对应关系。仅用于接口数据 → 表格字段的映射，不涉及 DOM。
 
-**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU, Item Name。
+**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Transaction ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU, Item Name。
 
 **SKU**：以列表接口 `transactions[].product.product_identifier` 的值为准（业务侧若存在另一套 SKU 由下游处理，导出取 Etsy 列表值）。
 
@@ -30,11 +30,12 @@
 |----------|------|----------------------|
 | Sale Date | 能 | `orders[].order_date`（Unix 时间戳，按 **UTC** 计算日期并格式化为 MM/DD/YY，避免本地时区导致日期偏移） |
 | Order ID | 能 | `orders[].order_id`；导出时加前缀，前缀代表对应的店铺，SLA、SLB、SLC，如 "SLC" 就是 3店 → "SLC3984074404" （已取消，不要前缀，对应代码已处理） |
+| Transaction ID | 能 | 优先取 `orders[].transactions[].transaction_id`，按 transaction 顺序用逗号拼接；若明细数组缺失可回退 `orders[].transaction_ids` |
 | Buyer User ID | 能 | 用 `orders[].buyer_id` 匹配 `buyers[]`，取 `buyers[].username`（如 "fr1giobobuffwzh9"） |
 | Full Name | 能 | `orders[].fulfillment.to_address.name`（收货人全名） |
 | First Name | 能 | 从 `to_address.name` 按空格拆分取首段 |
 | Last Name | 能 | 从 `to_address.name` 按空格拆分取其余部分（多词 last name 需约定规则） |
-| Number of Items | 能 | `orders[].transactions[].quantity` 求和 |
+| Number of Items | 能 | `orders[].transactions[].quantity` 按 transaction 顺序取值；多商品用逗号拼接，如 `2, 1, 4` |
 | Payment Method | 能 | 暂时固定为 'Credit Card' |
 | Date Shipped | 能 | 暂时固定为 空 |
 | Street 1 | 能 | `orders[].fulfillment.to_address.first_line` |
@@ -94,7 +95,7 @@
 | Adjusted Card Processing Fees | 不确定 | `refunds_details.seller_refunds` 等 |
 | Adjusted Net Order Amount | 不确定 | 可从退款与 total 推算，语义需与业务确认 |
 
-EarningsDetails **不包含**：Order ID（需请求参数）、Buyer User ID、Full Name、First/Last Name、地址、**SKU**、**Item Name**、Number of Items、Payment Method、Order Type、Payment Type、Sale Date 等；**SKU / Item Name 仅从列表接口取**。
+EarningsDetails **不包含**：Order ID（需请求参数）、Transaction ID、Buyer User ID、Full Name、First/Last Name、地址、**SKU**、**Item Name**、Number of Items、Payment Method、Order Type、Payment Type、Sale Date 等；**Transaction ID / SKU / Item Name 仅从列表接口取**。
 
 ---
 
@@ -115,11 +116,12 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Buyer User ID、
 |----------|----------|-----------------|------|
 | Sale Date | ✓ order_date | — | 转成 MM/DD/YY 等 |
 | Order ID | ✓ order_id | — | 导出加前缀 SLA/SLB/SLC |
+| Transaction ID | ✓ transactions[].transaction_id / transaction_ids[] | — | 多商品按 transaction 顺序逗号拼接 |
 | Buyer User ID | ✓ buyers[].username | — | 按 buyer_id 匹配 |
 | Full Name | ✓ to_address.name | — | 收货人全名 |
 | First Name | ✓ to_address.name 拆分 | — | 首段 |
 | Last Name | ✓ to_address.name 拆分 | — | 其余 |
-| Number of Items | ✓ transactions[].quantity 求和 | — | |
+| Number of Items | ✓ transactions[].quantity 按顺序逗号拼接 | — | 多商品示例：`2, 1, 4` |
 | Payment Method | 固定 'Credit Card' | — | |
 | Date Shipped | 固定 空 | — | |
 | Street 1 | ✓ to_address.first_line | — | |

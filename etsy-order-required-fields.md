@@ -16,6 +16,7 @@
 | 字段名 | 中文 | 是否必须 | 获取方式 |
 |--------|------|----------|----------|
 | **Order ID** | 订单ID | 必须 | **接口**：订单列表 `orders[].order_id`。**DOM**：列表页 `input[type="checkbox"][name]` 的 name/value，或 `a[href*="order_id="]`；详情页 `#order-details-order-info a[href*="order_id"]`。 |
+| **Transaction ID** | 交易ID | 必须 | **接口**：优先取订单列表 `orders[].transactions[].transaction_id`，多商品按 transaction 顺序逗号拼接；若明细缺失可回退 `orders[].transaction_ids`。**DOM**：详情页商品行、包裹项或链接参数中可能出现 transaction_id，但应以接口为准。 |
 | **Sale Date** | 销售日期 | 必须 | **接口**：订单列表 `orders[].order_date`（Unix 时间戳转日期）。**DOM**：含 "Ordered" 的 `.text-body-smaller` 解析日期；列表页 "Ordered MM/DD/YYYY" 文本。 |
 | **Full Name** | 全名 | 必须 | **接口**：订单列表 用 `orders[].buyer_id` 匹配 `buyers[]`，取 `buyers[].name`。**DOM**：详情 `div.address .name` 或 dropdown 内 `span[data-test-id="unsanitize"]`；列表同类型 dropdown。 |
 | **Buyer** | 买家 | 必须 | 与 Full Name 同源，取同一值即可。 |
@@ -27,7 +28,7 @@
 | **Ship Country** | 收货国家 | 必须 | **接口**：订单列表 `orders[].fulfillment.to_address.country`。**DOM**：详情 `div.address .country-name`。 |
 | **SKU** | 库存单位/商品SKU | 必须 | **接口**：订单列表 `orders[].transactions[].product.product_identifier`，多商品逗号拼接。**DOM**：详情/列表 "SKU: " 后文本或 Receipt 表格内 SKU 单元格。 |
 | **Item Name** | 商品名称 | 必须 | **接口**：订单列表 `orders[].transactions[].product.title`，多商品逗号拼接。**DOM**：商品标题区域文本；若页面节点稳定，可取对应标题元素。 |
-| **Number of Items** | 商品数量 | 必须 | **接口**：订单列表 `orders[].transactions[].quantity` 求和。**DOM**：详情 "1 Item(s)" / "1 item" 或 `table.b-xs-0 tbody tr` 数量；列表 "1 item" 文本。 |
+| **Number of Items** | 商品数量 | 必须 | **接口**：订单列表 `orders[].transactions[].quantity` 按 transaction 顺序输出，多商品用逗号拼接，如 `2, 1, 4`。**DOM**：详情 "1 Item(s)" / "1 item" 或 `table.b-xs-0 tbody tr` 数量；列表 "1 item" 文本。 |
 | **Currency** | 货币 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.total_cost.currency_code`；或收益接口 `shop_currency`。**DOM**：从金额前的 "$" 或 Order total 推断；美国站可默认 USD。 |
 | **Order Value** | 订单价值 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.items_cost`（value 为分需 ÷100）；或收益接口 `buyer_paid_details.items_price`。**DOM**：详情 Receipt "Item total" 行右侧金额。 |
 | **Buyer User ID** | 买家用户ID | 可能需要的 | **接口**：订单列表 用 `order.buyer_id` 匹配 `buyers[]`，取 `buyers[].buyer_id` 或 `buyers[].username`（Guest 无 username）。**DOM**：详情 `a[href*="buyer_id="]` 的 href 解析 buyer_id。 |
@@ -58,14 +59,14 @@
 ## 三、获取方式优先级建议
 
 1. **以接口为主**：能走 **Orders_OrdersCollection（订单列表）** 的字段一律用接口，避免依赖页面结构和多页点击。
-2. **必须字段**：订单列表接口可提供全部必须字段（Order ID、Sale Date、Full Name/Buyer、地址、SKU、Item Name、Number of Items、Currency、Order Value）；无需 DOM 即可完成导入所需数据。
+2. **必须字段**：订单列表接口可提供全部必须字段（Order ID、Transaction ID、Sale Date、Full Name/Buyer、地址、SKU、Item Name、Number of Items、Currency、Order Value）；无需 DOM 即可完成导入所需数据。
 3. **净额与费用**：Card Processing Fees、Order Net 仅收益接口 **Etsy_Order_Fulfillment_EarningsDetails** 有，若需“可能需要的”金额类字段，再按 order_id 请求该接口。
 4. **DOM 作为兜底**：接口不可用或需在详情页内一键导出时，按上表 DOM 列选择器取数；地址、金额、Status 等需在详情页取。
 
 ---
 
-## 四、必须字段汇总（15 项）
+## 四、必须字段汇总（16 项）
 
-Order ID、Sale Date、Full Name、Buyer、Street 1、Street 2、Ship City、Ship State、Ship Zipcode、Ship Country、SKU、Item Name、Number of Items、Currency、Order Value。
+Order ID、Transaction ID、Sale Date、Full Name、Buyer、Street 1、Street 2、Ship City、Ship State、Ship Zipcode、Ship Country、SKU、Item Name、Number of Items、Currency、Order Value。
 
-以上 14 项在目标系统中用于订单主表、收货信息与订单明细，**订单列表接口单接口即可满足**，无需详情页 DOM 或收益接口。
+以上 16 项在目标系统中用于订单主表、收货信息与订单明细，**订单列表接口单接口即可满足**，无需详情页 DOM 或收益接口。
