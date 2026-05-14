@@ -39,7 +39,8 @@
 | **Buyer User ID** | 买家用户ID | 页上无直接 “Buyer User ID” 文案，但详情有带 buyer_id 的链接。 | 详情：`a[href*="buyer_id="]` 的 href 中解析 `buyer_id=1212094079`。需确认 Etsy 该参数是否即 Buyer User ID。 |
 | **First Name** / **Last Name** | 名字/姓氏 | 页面只有全名 "Tracie jackson"。 | 用 `div.address .name` 或买家名节点文本，按首空格拆成 First/Last（不保证 Etsy 始终 “First Last” 格式）。 |
 | **Payment Method** | 支付方式 | 列表未提供；详情为 “Paid via Other method”。 | 详情：`#payment-msg` 文本（如 "Paid via Other method on Feb 13, 2026"），取 “Other method” 或解析。非标准 “Credit Card” 等需映射。 |
-| **Date Shipped** | 发货日期 | 未发货时只有 “Ship by” 日期，无实际发货日。 | 已发货时可能在订单时间线或 “Shipped” 相关区块；当前 HTML 仅有 “Ship by Mar 2, 2026”，需在发货后的页面再确认元素。 |
+| **Ship Date** | 发货日期 | 未发货时无实际发货日，应为空。 | 已发货时可能在订单时间线或 “Shipped” 相关区块；当前 HTML 未见实际发货日期，需在发货后的页面再确认元素。 |
+| **Latest Ship Date** | 最晚发货日期 | 对应 “Ship by” 日期。 | 当前 HTML 可见 “Ship by Mar 2, 2026” 这类文本，可解析为最晚发货日期；字段顺序紧跟 Ship Date。 |
 | **Currency** | 货币 | 无单独 “Currency” 标签，金额均为 $。 | 可从 “Order total” 或 “$” 推断 USD；或写死 USD（美国站）。 |
 | **Shipping Discount** | 运费折扣 | 若为 0 可能不展示。 | 在 Receipt 的 “Shipping” 相关行或 “Shipping discount” 文案旁查找金额；当前片段未见。 |
 | **Card Processing Fees** | 银行卡处理费 | 在 Earnings 的 “Fees & credits” 里。 | 详情切到 “Earnings” Tab，在 “Payment processing fee” 行取金额（如 -$1.60）；需在 `id="dg-tabs-preact__tab-2--default_wt_tab_panel"` 内查找。 |
@@ -54,7 +55,8 @@
 | 表格字段 | 中文 | 原因 |
 |----------|------|------|
 | **Buyer User ID** | 买家用户ID | 仅可能从链接参数 `buyer_id=` 解析，且需确认与导出表 “Buyer User ID” 是否同一含义。 |
-| **Date Shipped** | 发货日期 | 未发货订单无此信息；已发货需在其它区块或页面确认。 |
+| **Ship Date** | 发货日期 | 未发货订单无实际发货日期，应为空；已发货需在其它区块或页面确认。 |
+| **Latest Ship Date** | 最晚发货日期 | 未发货订单通常有 “Ship by” 日期，可解析；若页面不展示则需依赖接口 `fulfillment.expected_ship_date`。 |
 | **Adjusted Order Total** | 调整后的订单总额 | 当前片段无调整项展示。 |
 | **Adjusted Card Processing Fees** | 调整后的银行卡处理费 | 同上。 |
 | **Adjusted Net Order Amount** | 调整后的订单净额 | 同上。 |

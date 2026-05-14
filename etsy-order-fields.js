@@ -13,7 +13,8 @@ export const etsyOrderTableFields = {
   'Last Name': null, // 姓氏
   'Number of Items': null, // 商品数量
   'Payment Method': null, // 支付方式
-  'Date Shipped': null, // 发货日期
+  'Ship Date': null, // 发货日期
+  'Latest Ship Date': null, // 最晚发货日期
   'Street 1': null, // 街道1
   'Street 2': null, // 街道2
   'Ship City': null, // 收货城市
@@ -58,7 +59,8 @@ export const etsyOrderFieldLabels = {
   'Last Name': '姓氏',
   'Number of Items': '商品数量',
   'Payment Method': '支付方式',
-  'Date Shipped': '发货日期',
+  'Ship Date': '发货日期',
+  'Latest Ship Date': '最晚发货日期',
   'Street 1': '街道1',
   'Street 2': '街道2',
   'Ship City': '收货城市',

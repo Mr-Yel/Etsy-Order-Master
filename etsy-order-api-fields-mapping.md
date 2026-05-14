@@ -2,7 +2,7 @@
 
 对照导出目标系统的表格字段，记录各接口返回值与导出表字段的对应关系。仅用于接口数据 → 表格字段的映射，不涉及 DOM。
 
-**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Transaction ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU, Item Name。
+**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Transaction ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Ship Date, Latest Ship Date, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU, Item Name。
 
 **SKU**：以列表接口 `transactions[].product.product_identifier` 的值为准（业务侧若存在另一套 SKU 由下游处理，导出取 Etsy 列表值）。
 
@@ -37,7 +37,8 @@
 | Last Name | 能 | 从 `to_address.name` 按空格拆分取其余部分（多词 last name 需约定规则） |
 | Number of Items | 能 | `orders[].transactions[].quantity`；当前展示/导出按 **一行一个 transaction**，每行填当前 transaction 的数量 |
 | Payment Method | 能 | 暂时固定为 'Credit Card' |
-| Date Shipped | 能 | 暂时固定为 空 |
+| Ship Date | 能 | `orders[].fulfillment.actual_ship_date`；未发货或为空时导出空，不再回退预计发货时间 |
+| Latest Ship Date | 能 | `orders[].fulfillment.expected_ship_date`；最晚/预计发货时间，字段顺序紧跟 Ship Date |
 | Street 1 | 能 | `orders[].fulfillment.to_address.first_line` |
 | Street 2 | 能 | `orders[].fulfillment.to_address.second_line` |
 | Ship City | 能 | `orders[].fulfillment.to_address.city` |
@@ -123,7 +124,8 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Transaction ID�
 | Last Name | ✓ to_address.name 拆分 | — | 其余 |
 | Number of Items | ✓ transactions[].quantity | — | 当前按一行一个 transaction 展示/导出 |
 | Payment Method | 固定 'Credit Card' | — | |
-| Date Shipped | 固定 空 | — | |
+| Ship Date | ✓ fulfillment.actual_ship_date | — | 实际发货时间；未发货或为空时导出空 |
+| Latest Ship Date | ✓ fulfillment.expected_ship_date | — | 最晚/预计发货时间；字段顺序紧跟 Ship Date |
 | Street 1 | ✓ to_address.first_line | — | |
 | Street 2 | ✓ to_address.second_line | — | |
 | Ship City | ✓ to_address.city | — | |

@@ -15,7 +15,8 @@ export const EXPORT_COLUMNS = [
   "Last Name",
   "Number of Items",
   "Payment Method",
-  "Date Shipped",
+  "Ship Date",
+  "Latest Ship Date",
   "Street 1",
   "Street 2",
   "Ship City",
@@ -222,9 +223,8 @@ export function mapOrdersToTableRows(
         "Last Name": lastName,
         "Number of Items": safeStr(transaction.quantity ?? ""),
         "Payment Method": "Credit Card",
-        "Date Shipped": formatDateUTC(
-          order.fulfillment?.actual_ship_date ?? order.fulfillment?.expected_ship_date
-        ),
+        "Ship Date": formatDateUTC(order.fulfillment?.actual_ship_date),
+        "Latest Ship Date": formatDateUTC(order.fulfillment?.expected_ship_date),
         "Street 1": safeStr(addr?.first_line),
         "Street 2": safeStr(addr?.second_line),
         "Ship City": safeStr(addr?.city),

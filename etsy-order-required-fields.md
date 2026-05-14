@@ -35,7 +35,8 @@
 | **First Name** | 名字 | 可能需要的 | **接口**：从 `buyers[].name` 按空格拆分。**DOM**：从 `div.address .name` 或买家名节点按空格拆分（格式不保证）。 |
 | **Last Name** | 姓氏 | 可能需要的 | 同上，拆分的后半段。 |
 | **Payment Method** | 支付方式 | 可能需要的 | **接口**：订单列表 `orders[].payment.payment_method`（cc/dc_paypal/apple_pay/k_pay_later 等，可映射为 "Credit Card" 等）。**DOM**：详情 `#payment-msg` 解析 "Paid via ..." 文案。 |
-| **Date Shipped** | 发货日期 | 可能需要的 | **接口**：订单列表 `orders[].fulfillment.actual_ship_date`（未发货为 null）。**DOM**：已发货订单在时间线/Shipped 区块查找；未发货无此值。 |
+| **Ship Date** | 发货日期 | 可能需要的 | **接口**：订单列表 `orders[].fulfillment.actual_ship_date`（未发货为 null）；为空时导出空，不回退预计发货时间。**DOM**：已发货订单在时间线/Shipped 区块查找；未发货无此值。 |
+| **Latest Ship Date** | 最晚发货日期 | 可能需要的 | **接口**：订单列表 `orders[].fulfillment.expected_ship_date`。**DOM**：未发货订单通常可从 “Ship by” 日期解析；已发货订单若页面仍展示预计发货信息，可作为备选。字段顺序紧跟 Ship Date。 |
 | **Coupon Code** | 优惠券代码 | 可能需要的 | **接口**：订单列表 `orders[].payment.sellermarketing_coupons[0].code`；或收益接口 `buyer_paid_details.shop_promotions[0].name`。**DOM**：含优惠券代码的 badge 或折扣行文本。 |
 | **Coupon Details** | 优惠券详情 | 可能需要的 | **接口**：从 `sellermarketing_coupons[0].percentage` 或 `shop_promotions` 拼成如 "15% off"。**DOM**：`span[data-tooltip="15% off"]` 或折扣行文案。 |
 | **Discount Amount** | 折扣金额 | 可能需要的 | **接口**：订单列表 `orders[].payment.cost_breakdown.discount`；或收益接口 `shop_coupon_discount_amount`。**DOM**：Receipt 中 Shop coupon 行右侧金额。 |
