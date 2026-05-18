@@ -247,7 +247,7 @@ async function drainQueue(): Promise<void> {
       const currentEntry = pendingEntries.shift();
       if (!currentEntry) continue;
       try {
-        await uploadEntry(currentEntry);
+        // await uploadEntry(currentEntry);
       } catch (error) {
         console.warn("[APP-LOG] Failed to upload log entry", {
           orderNo: currentEntry.orderNo,
@@ -264,6 +264,7 @@ export async function enqueueAppLogFromEvent(
   payload: AppLogEvent,
   sender?: AppLogSender
 ): Promise<void> {
+  /*
   if (!(await shouldUploadLogs())) {
     console.log("[APP-LOG] Skip enqueue because upload is disabled", {
       event: payload.event,
@@ -271,11 +272,13 @@ export async function enqueueAppLogFromEvent(
     });
     return;
   }
+  */
 
   const entry = {
     orderNo: getNormalizedOrderNo(payload.orderNo),
     content: buildLogContent(payload, sender),
   };
+  /*
   pendingEntries.push(entry);
   console.log("[APP-LOG] Enqueued log entry", {
     event: payload.event,
@@ -286,6 +289,7 @@ export async function enqueueAppLogFromEvent(
   });
 
   void drainQueue();
+  */
 }
 
 export function logBackgroundRuntimeStarted(): void {

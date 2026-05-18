@@ -77,12 +77,19 @@ function appLogConfigPlugin() {
 export default defineConfig({
   modules: ["@wxt-dev/module-vue"],
   vite: () => ({
-    plugins: [devTokenPlugin(), appLogConfigPlugin()],
+    plugins: [
+      devTokenPlugin(),
+      // appLogConfigPlugin(),
+    ],
   }),
   manifest: {
     // 权限配置
     permissions: ['storage', 'tabs'],
-    host_permissions: ['*://*.etsy.com/*', 'https://kstgl.kesiteng.cn/*', 'https://huangxiangkun.uno/*'],
+    host_permissions: [
+      '*://*.etsy.com/*',
+      'https://kstgl.kesiteng.cn/*',
+      // 'https://huangxiangkun.uno/*',
+    ],
     
     // Web 可访问资源
     web_accessible_resources: [
