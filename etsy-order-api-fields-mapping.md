@@ -15,7 +15,7 @@
 | 接口 | 说明 | 主要用途 |
 |------|------|----------|
 | **Orders_OrdersCollection** | 订单列表（orders_search） | 绝大部分导出字段，含 SKU、Item Name、姓名、地址、金额等 |
-| **Etsy_Order_Fulfillment_EarningsDetails** | 订单收益/费用明细 | 订单净额、卡处理费、Adjusted 相关 |
+| **Etsy_Order_Fulfillment_EarningsDetails** | 订单收益/费用明细 | 理论上可补充订单净额、卡处理费、Adjusted 相关；**当前订单管理实现已停用** |
 | **Common_Convo** | 会话详情 | 买家邮箱、订单号/日期（从 subject 解析）、买家名（备用） |
 
 ---
@@ -55,7 +55,7 @@
 | Sales Tax | 能 | `orders[].payment.cost_breakdown.tax_cost.value` ÷ 100 |
 | Order Total | 能 | `orders[].payment.cost_breakdown.total_cost.value` ÷ 100 |
 | Status | 能 |暂时固定为 空 |
-| Card Processing Fees | 不能 | 列表接口无，需 **EarningsDetails** |
+| Card Processing Fees | 不能 | 列表接口无；理论上需 **EarningsDetails**，但**当前订单管理实现未请求详情接口**，展示固定为「暂时无法获取」。 |
 | Order Net | 不能 | 列表接口无，需 **EarningsDetails** 的 `total`（卖家实收）。**当前导出/展示**：固定填「暂时无法获取」。 |
 | Adjusted Order Total | 能（部分） | 通常为 0；或 `cost_breakdown.adjusted_total_cost`、`refund` 等按业务约定。**当前导出/展示**：固定填 `0`。 |
 | Adjusted Card Processing Fees | 不能 | 需 **EarningsDetails** 的 refunds_details。**当前导出/展示**：固定填 `0`。 |
@@ -74,6 +74,20 @@
 
 ## 二、收益明细接口（Etsy_Order_Fulfillment_EarningsDetails）
 
+**当前实现说明**：订单管理表格当前**不再请求**该详情接口。
+
+**不获取原因**：
+- 该接口需要按 `order_id` 逐单请求，订单数一多会明显放大请求次数与加载时延。
+- 当前业务优先保证订单管理表格快速打开、稳定展示，因此仅使用列表接口生成表格。
+- 详情接口目前主要补 `Card Processing Fees` 等少数字段，性价比不足；这些字段暂以占位文案展示。
+
+**当前展示策略**：
+- `Card Processing Fees`：固定显示 `暂时无法获取`
+- `Order Net`：固定显示 `暂时无法获取`
+- `Adjusted Order Total`：固定显示 `0`
+- `Adjusted Card Processing Fees`：固定显示 `0`
+- `Adjusted Net Order Amount`：固定显示 `0`
+
 **请求**：按订单请求，GET  
 `https://www.etsy.com/api/v3/ajax/shop/{shopId}/mission-control/orders/earnings/{orderId}/details/all?include_refunded_labels=true&include_vat_in_sum=true`
 
@@ -90,8 +104,8 @@
 | Shipping | 能 | `buyer_paid_details.shipping_price` |
 | Sales Tax | 能 | `buyer_paid_details.tax_price` |
 | Order Total | 能 | `buyer_paid_details.total_paid` |
-| Card Processing Fees | 能 | `fees_and_credits_details.processing_fee`：结构为 `{ amount, divisor, currency_code, currency_formatted_short }`（如 amount=-135, divisor=100 → 取绝对值后 1.35，即 \|amount\|/divisor） |
-| Order Net | 能 | `total`（卖家实收，amount/divisor）。当前导出未使用该值，Order Net 列统一填「暂时无法获取」。 |
+| Card Processing Fees | 理论上能 | `fees_and_credits_details.processing_fee`：结构为 `{ amount, divisor, currency_code, currency_formatted_short }`（如 amount=-135, divisor=100 → 取绝对值后 1.35，即 \|amount\|/divisor）。**当前订单管理实现未请求该接口，表格固定显示「暂时无法获取」** |
+| Order Net | 理论上能 | `total`（卖家实收，amount/divisor）。**当前订单管理实现未请求该接口，表格固定显示「暂时无法获取」** |
 | Adjusted Order Total | 不确定 | `refunds_details` 有退款结构，是否对应 “Adjusted Order Total” 需按业务定义 |
 | Adjusted Card Processing Fees | 不确定 | `refunds_details.seller_refunds` 等 |
 | Adjusted Net Order Amount | 不确定 | 可从退款与 total 推算，语义需与业务确认 |
@@ -105,7 +119,8 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Transaction ID�
 | 目标 | 建议接口组合 |
 |------|----------------|
 | 仅列表接口 | 可覆盖除 Card Processing Fees、Order Net、Adjusted Card Processing Fees、Adjusted Net Order Amount 外的所有目标字段；SKU、Item Name、姓名、地址、金额等均以列表为准。 |
-| 完整导出（含净额与费用） | **订单列表接口** + 按 order_id 请求 **EarningsDetails**，用列表填大部分字段，用详情填 Card Processing Fees、Order Net 及 Adjusted 相关。Order Net 当前固定为「暂时无法获取」，未从详情取。 |
+| 当前订单管理实现 | **仅订单列表接口**，不请求 **EarningsDetails**。原因：详情接口需逐单请求，明显增加加载耗时；当前以表格打开速度和稳定性优先。Card Processing Fees、Order Net 固定为「暂时无法获取」，Adjusted 相关固定为 `0`。 |
+| 完整导出（理论方案） | **订单列表接口** + 按 order_id 请求 **EarningsDetails**，用列表填大部分字段，用详情填 Card Processing Fees、Order Net 及 Adjusted 相关。 |
 
 ---
 
@@ -142,8 +157,8 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Transaction ID�
 | Sales Tax | ✓ cost_breakdown.tax_cost.value ÷100 | ✓ tax_price | |
 | Order Total | ✓ cost_breakdown.total_cost.value ÷100 | ✓ total_paid | |
 | Status | 固定 空 | — | |
-| Card Processing Fees | — | ✓ fees_and_credits_details.processing_fee（\|amount\|/divisor） | 仅详情有 |
-| Order Net | — | ✓ total（卖家实收） | 仅详情有；当前导出固定为「暂时无法获取」 |
+| Card Processing Fees | — | ✓ fees_and_credits_details.processing_fee（\|amount\|/divisor） | 仅详情有；**当前订单管理实现不请求详情接口，固定显示「暂时无法获取」** |
+| Order Net | — | ✓ total（卖家实收） | 仅详情有；**当前订单管理实现不请求详情接口，固定显示「暂时无法获取」** |
 | Adjusted Order Total | ✓ 部分 cost_breakdown.adjusted_total_cost 等 | ✓ refunds_details | 通常为 0；当前导出固定为 `0` |
 | Adjusted Card Processing Fees | — | ✓ refunds_details.seller_refunds | 仅详情有；当前导出固定为 `0` |
 | Adjusted Net Order Amount | — | ✓ 从 refunds 与 total 推算 | 仅详情有；当前导出固定为 `0` |

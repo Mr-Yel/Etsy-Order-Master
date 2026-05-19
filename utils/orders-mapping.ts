@@ -154,26 +154,24 @@ function formatCents(value: number | undefined): string {
   return (value / 100).toFixed(2);
 }
 
-/** Card Processing Fees：processing_fee 为负数，取绝对值后 amount/divisor */
-function formatProcessingFee(fee: ProcessingFeeFromDetail | undefined): string {
-  if (fee?.divisor == null || fee.divisor === 0) return "";
-  const amount = fee.amount ?? 0;
-  return (Math.abs(amount) / fee.divisor).toFixed(2);
-}
+// /** Card Processing Fees：processing_fee 为负数，取绝对值后 amount/divisor */
+// function formatProcessingFee(fee: ProcessingFeeFromDetail | undefined): string {
+//   if (fee?.divisor == null || fee.divisor === 0) return "";
+//   const amount = fee.amount ?? 0;
+//   return (Math.abs(amount) / fee.divisor).toFixed(2);
+// }
 
-/** 收益明细接口返回中 fees_and_credits_details.processing_fee 结构（用于 Card Processing Fees） */
-export type ProcessingFeeFromDetail = {
-  amount?: number;
-  divisor?: number;
-  currency_code?: string;
-  currency_formatted_short?: string;
-};
+// /** 收益明细接口返回中 fees_and_credits_details.processing_fee 结构（用于 Card Processing Fees） */
+// export type ProcessingFeeFromDetail = {
+//   amount?: number;
+//   divisor?: number;
+//   currency_code?: string;
+//   currency_formatted_short?: string;
+// };
 
 export type MapOrdersOptions = {
   /** Etsy 店铺 ID，用于根据规则生成导出用订单 ID */
   shopId?: number;
-  /** 按 order_id 的收益明细（含 processing_fee），用于填充 Card Processing Fees */
-  earningsByOrderId?: Record<number, { fees_and_credits_details?: { processing_fee?: ProcessingFeeFromDetail } }>;
 };
 
 export function mapOrdersToTableRows(
@@ -181,7 +179,7 @@ export function mapOrdersToTableRows(
   buyers: RawBuyer[],
   options: MapOrdersOptions = {}
 ): ExportTableRow[] {
-  const { shopId, earningsByOrderId } = options;
+  const { shopId } = options;
   const buyerMap = new Map<number, RawBuyer>();
   buyers.forEach((b) => {
     if (b.buyer_id != null) buyerMap.set(b.buyer_id, b);
@@ -198,8 +196,6 @@ export function mapOrdersToTableRows(
     const firstCoupon = coupons[0];
     const couponCode = firstCoupon?.code ?? "";
     const couponDetails = formatCouponDetails(firstCoupon?.percentage);
-    const earnings = order.order_id != null ? earningsByOrderId?.[order.order_id] : undefined;
-    const cardProcessingFees = formatProcessingFee(earnings?.fees_and_credits_details?.processing_fee);
     const fallbackTransactionIds = order.transaction_ids ?? [];
     const transactions: RawTransaction[] =
       order.transactions != null && order.transactions.length > 0
@@ -242,7 +238,8 @@ export function mapOrdersToTableRows(
         "Sales Tax": "0",
         "Order Total": formatCents(cost?.total_cost?.value),
         Status: "",
-        "Card Processing Fees": cardProcessingFees,
+        // 当前订单管理表格只使用列表接口，不再逐单请求详情接口补费用字段。
+        "Card Processing Fees": "暂时无法获取",
         "Order Net": "暂时无法获取",
         "Adjusted Order Total": "0",
         "Adjusted Card Processing Fees": "0",

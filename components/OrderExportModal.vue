@@ -114,36 +114,38 @@ async function fetchOrders() {
       { credentials: "include" }
     );
 
-    const earningsByOrderId: Record<
-      number,
-      { fees_and_credits_details?: { processing_fee?: { amount?: number; divisor?: number } } }
-    > = {};
-    const shopId = etsy.shopId;
-    await Promise.all(
-      orderList.map(async (order) => {
-        const orderId = order.order_id as number;
-        try {
-          const earningsUrl = `https://www.etsy.com/api/v3/ajax/shop/${shopId}/mission-control/orders/earnings/${orderId}/details/all?include_refunded_labels=true&include_vat_in_sum=true`;
-          const er = await fetch(earningsUrl, { method: "GET", credentials: "include" });
-          if (!er.ok) return;
-          const earningsData = await er.json();
-          if (earningsData?.fees_and_credits_details?.processing_fee != null) {
-            earningsByOrderId[orderId] = {
-              fees_and_credits_details: {
-                processing_fee: earningsData.fees_and_credits_details.processing_fee,
-              },
-            };
-          }
-        } catch {
-          // 单笔详情失败不影响其他订单，Card Processing Fees 留空
-        }
-      })
-    );
+    // 暂时停用详情接口，只使用列表接口数据生成表格。
+    // 如需恢复 Card Processing Fees，可重新启用 earnings details 请求并传入 earningsByOrderId。
+    // const earningsByOrderId: Record<
+    //   number,
+    //   { fees_and_credits_details?: { processing_fee?: { amount?: number; divisor?: number } } }
+    // > = {};
+    // const shopId = etsy.shopId;
+    // await Promise.all(
+    //   orderList.map(async (order) => {
+    //     const orderId = order.order_id as number;
+    //     try {
+    //       const earningsUrl = `https://www.etsy.com/api/v3/ajax/shop/${shopId}/mission-control/orders/earnings/${orderId}/details/all?include_refunded_labels=true&include_vat_in_sum=true`;
+    //       const er = await fetch(earningsUrl, { method: "GET", credentials: "include" });
+    //       if (!er.ok) return;
+    //       const earningsData = await er.json();
+    //       if (earningsData?.fees_and_credits_details?.processing_fee != null) {
+    //         earningsByOrderId[orderId] = {
+    //           fees_and_credits_details: {
+    //             processing_fee: earningsData.fees_and_credits_details.processing_fee,
+    //           },
+    //         };
+    //       }
+    //     } catch {
+    //       // 单笔详情失败不影响其他订单，Card Processing Fees 留空
+    //     }
+    //   })
+    // );
 
     rows.value = mapOrdersToTableRows(
       orderList as Parameters<typeof mapOrdersToTableRows>[0],
       buyers as Parameters<typeof mapOrdersToTableRows>[1],
-      { earningsByOrderId, shopId: etsy.shopId }
+      { shopId: etsy.shopId }
     );
     selected.value = new Set(rows.value.map((_, i) => i));
   } catch (e) {

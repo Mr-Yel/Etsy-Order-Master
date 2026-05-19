@@ -45,8 +45,8 @@
 | **Sales Tax** | 销售税 | 可能需要的 | **接口**：订单列表 `orders[].payment.cost_breakdown.tax_cost`；或收益接口 `buyer_paid_details.tax_price`。**DOM**：详情 Receipt "Sales tax" 行右侧。 |
 | **Order Total** | 订单总额 | 可能需要的 | **接口**：订单列表 `orders[].payment.cost_breakdown.total_cost`；或收益接口 `buyer_paid_details.total_paid`。**DOM**：详情 Receipt "Order total" 行；列表金额节点。 |
 | **Status** | 状态 | 可能需要的 | **接口**：订单列表 用 `orders[].order_state_id` 匹配 `order_states[].order_state_id`，取 `order_states[].name`（如 "New"）。**DOM**：详情 `button[role="menuitemradio"][aria-checked="true"]` 文本或 "Update progress" 下拉当前项。 |
-| **Card Processing Fees** | 银行卡处理费 | 可能需要的 | **接口**：仅收益接口 `fees_and_credits_details.processing_fee`。**DOM**：详情切到 Earnings Tab，在 "Payment processing fee" 行取金额（`#dg-tabs-preact__tab-2--default_wt_tab_panel` 内）。 |
-| **Order Net** | 订单净额 | 可能需要的 | **接口**：仅收益接口 `total`（卖家实收）。**DOM**：Earnings 区块 "You earned $x.xx" 或 `.wt-text-slime`。 |
+| **Card Processing Fees** | 银行卡处理费 | 可能需要的 | **理论数据源**：仅收益接口 `fees_and_credits_details.processing_fee`。**当前订单管理实现**：为避免按订单逐条请求详情接口导致加载变慢，暂不获取，表格固定显示 `暂时无法获取`。**DOM**：详情切到 Earnings Tab，在 "Payment processing fee" 行取金额（`#dg-tabs-preact__tab-2--default_wt_tab_panel` 内）。 |
+| **Order Net** | 订单净额 | 可能需要的 | **理论数据源**：仅收益接口 `total`（卖家实收）。**当前订单管理实现**：与 Card Processing Fees 一样，暂不请求详情接口，表格固定显示 `暂时无法获取`。**DOM**：Earnings 区块 "You earned $x.xx" 或 `.wt-text-slime`。 |
 | **Adjusted Order Total** | 调整后的订单总额 | 可能需要的 | **接口**：订单列表 `orders[].payment.cost_breakdown.adjusted_total_cost`、`refund`；或收益接口 `refunds_details`。**DOM**：当前详情页片段无调整项展示，退款后可能出现在其它区块。 |
 | **Adjusted Card Processing Fees** | 调整后的银行卡处理费 | 可能需要的 | **接口**：仅收益接口 `refunds_details.seller_refunds` 等。**DOM**：无直接对应。 |
 | **Adjusted Net Order Amount** | 调整后的订单净额 | 可能需要的 | **接口**：收益接口退款与 total 推算。**DOM**：无直接对应。 |
@@ -61,7 +61,7 @@
 
 1. **以接口为主**：能走 **Orders_OrdersCollection（订单列表）** 的字段一律用接口，避免依赖页面结构和多页点击。
 2. **必须字段**：订单列表接口可提供全部必须字段（Order ID、Transaction ID、Sale Date、Full Name/Buyer、地址、SKU、Item Name、Number of Items、Currency、Order Value）；无需 DOM 即可完成导入所需数据。
-3. **净额与费用**：Card Processing Fees、Order Net 仅收益接口 **Etsy_Order_Fulfillment_EarningsDetails** 有，若需“可能需要的”金额类字段，再按 order_id 请求该接口。
+3. **净额与费用**：Card Processing Fees、Order Net 仅收益接口 **Etsy_Order_Fulfillment_EarningsDetails** 有，但该接口需要按 `order_id` 逐单请求。当前订单管理实现为保证打开速度与稳定性，**不请求该详情接口**，这两列统一显示 `暂时无法获取`。
 4. **DOM 作为兜底**：接口不可用或需在详情页内一键导出时，按上表 DOM 列选择器取数；地址、金额、Status 等需在详情页取。
 
 ---
