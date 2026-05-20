@@ -71,6 +71,10 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
+import {
+  collectConversationImagesFromActiveTab,
+  downloadConversationImagesZipFromActiveTab,
+} from "@/lib/etsy-tab-client";
 
 const imageUrls = ref<string[]>([]);
 const selectedIndices = ref<number[]>([]);
@@ -117,33 +121,10 @@ async function fetchImages(): Promise<void> {
   fetchError.value = "";
 
   try {
-    const tabs = await browser.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-
-    if (tabs.length === 0 || !tabs[0].id) {
-      fetchError.value = "未找到当前标签页";
-      return;
-    }
-
-    const [imgResponse, orderResponse] = await Promise.all([
-      browser.tabs.sendMessage(tabs[0].id, { type: "GET_MSG_LIST_IMAGES" }),
-      browser.tabs.sendMessage(tabs[0].id, { type: "GET_ORDER_NUMBER" }),
-    ]);
-
-    if (imgResponse?.success && Array.isArray(imgResponse.urls)) {
-      imageUrls.value = imgResponse.urls;
-      selectedIndices.value = [];
-    } else {
-      fetchError.value = imgResponse?.error ?? "获取图片链接失败";
-    }
-
-    if (orderResponse?.success && orderResponse.orderNumber !== undefined) {
-      orderNumber.value = orderResponse.orderNumber ?? "";
-    } else {
-      orderNumber.value = "";
-    }
+    const response = await collectConversationImagesFromActiveTab();
+    imageUrls.value = response.urls;
+    orderNumber.value = response.orderNumber ?? "";
+    selectedIndices.value = [];
   } catch (error) {
     const msg =
       error instanceof Error ? error.message : "获取图片链接失败";
@@ -170,30 +151,18 @@ async function onDownload(): Promise<void> {
   isDownloading.value = true;
   fetchError.value = "";
   try {
-    const tabs = await browser.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-    if (tabs.length === 0 || !tabs[0].id) {
-      fetchError.value = "未找到当前标签页";
-      return;
-    }
-
-    const response = (await browser.tabs.sendMessage(tabs[0].id, {
-      type: "DOWNLOAD_IMAGES_AS_ZIP",
+    const response = await downloadConversationImagesZipFromActiveTab({
       urls,
       orderNumber: orderNumber.value,
-    })) as { success?: boolean; zipBase64?: string; filename?: string; error?: string };
+    });
 
-    if (response?.success && response.zipBase64 && response.filename) {
+    if (response.zipBase64 && response.filename) {
       const blob = base64ToBlob(response.zipBase64);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = response.filename;
       a.click();
       URL.revokeObjectURL(a.href);
-    } else {
-      fetchError.value = response?.error ?? "打包下载失败";
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : "打包下载失败";

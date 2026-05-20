@@ -1,6 +1,4 @@
-import type { OrderState } from "@/composables/useEtsyData";
-
-export type { OrderState };
+import type { OrderState } from "@/lib/etsy-context";
 
 /**
  * 将 Etsy 返回的 order_states 转为 name -> order_state_id 映射（用于 Popup 内下拉）

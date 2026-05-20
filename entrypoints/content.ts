@@ -3,6 +3,21 @@ import JSZip from "jszip";
 import ContentScriptWrapper from "@/components/ContentScriptWrapper.vue";
 import { emitAppLog } from "@/lib/app-log";
 import {
+  ETSY_BRIDGE_EVENT_TYPE,
+  type EtsyContextGetData,
+} from "@/lib/etsy-bridge-types";
+import { fetchEtsyImagesAsBase64 } from "@/lib/etsy-bridge-client";
+import {
+  ETSY_CONTENT_BRIDGE_ACTIONS,
+  ETSY_CONTENT_BRIDGE_MESSAGE_TYPE,
+  type EtsyContentBridgeRequest,
+  type EtsyContentBridgeResponse,
+  type EtsyContentOrdersListPayload,
+  type EtsyConversationImagesCollectData,
+  type EtsyImagesZipDownloadPayload,
+} from "@/lib/etsy-content-bridge-types";
+import type { EtsyBuyer, EtsyOrder } from "@/types/etsy-order";
+import {
   fetchOrderList,
   getOrderListBaseParams,
 } from "@/composables/useFetchOrderList";
@@ -204,6 +219,147 @@ async function getEtsyDataFromMainWorld(): Promise<{
     return {
       success: false,
       error: error instanceof Error ? error.message : "无法获取 Etsy 数据",
+    };
+  }
+}
+
+function collectConversationImagesFromPage(): EtsyConversationImagesCollectData {
+  const container =
+    document.querySelector("#msg-list-container") ??
+    document.querySelector(".msg-list-container");
+
+  if (!container) {
+    throw new Error("未找到 msg-list-container，请确保在聊天页面打开");
+  }
+
+  const links = container.querySelectorAll("a");
+  const urlSet = new Set<string>();
+  links.forEach((a) => {
+    const href = (a.getAttribute("href") ?? (a as HTMLAnchorElement).href)?.trim();
+    if (href) urlSet.add(href);
+  });
+
+  return {
+    urls: Array.from(urlSet),
+    orderNumber: getOrderNumberFromPage(),
+  };
+}
+
+function getOrderNumberFromPage(): string {
+  const buyerInfo = document.querySelector(".buyer-info");
+  if (!buyerInfo) return "";
+
+  const listUnstyled = buyerInfo.querySelector(".wt-list-unstyled");
+  if (!listUnstyled) return "";
+
+  const truncateEl = listUnstyled.querySelector(".wt-text-truncate");
+  return truncateEl ? (truncateEl.textContent ?? "").trim() : "";
+}
+
+async function buildImagesZipData(
+  urls: string[],
+  orderNumber: string
+): Promise<{ zipBase64: string; filename: string }> {
+  if (!urls.length) {
+    throw new Error("没有选中图片");
+  }
+
+  const { images: imagesBase64 } = await fetchEtsyImagesAsBase64({ urls });
+
+  function getExt(url: string): string {
+    try {
+      const pathname = new URL(url, "https://x").pathname;
+      const match = pathname.match(/\.(jpe?g|png|gif|webp|bmp)(\?|$)/i);
+      return match ? match[1].toLowerCase() : "jpg";
+    } catch {
+      return "jpg";
+    }
+  }
+
+  const zip = new JSZip();
+  for (let i = 0; i < imagesBase64.length; i++) {
+    const ext = getExt(urls[i]);
+    zip.file(`image_${i + 1}.${ext}`, imagesBase64[i], { base64: true });
+  }
+
+  return {
+    zipBase64: await zip.generateAsync({ type: "base64" }),
+    filename: (orderNumber || "images").replace(/[/\\?*:|"]/g, "_") + ".zip",
+  };
+}
+
+async function handleEtsyContentBridgeRequest(
+  message: EtsyContentBridgeRequest
+): Promise<EtsyContentBridgeResponse<unknown>> {
+  try {
+    if (message.action === ETSY_CONTENT_BRIDGE_ACTIONS.contextGet) {
+      const result = await ensureEtsyContextFromMainWorld();
+      if (result.status !== "ready" || !result.context) {
+        return {
+          success: false,
+          error: {
+            code: "ETSY_CONTEXT_UNAVAILABLE",
+            message: result.error || "无法获取 Etsy 数据",
+          },
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          raw: result.context.raw,
+          shopId: result.context.shopId,
+          orderStates: result.context.orderStates,
+        } satisfies EtsyContextGetData,
+      };
+    }
+
+    if (message.action === ETSY_CONTENT_BRIDGE_ACTIONS.ordersList) {
+      const payload = message.payload as EtsyContentOrdersListPayload;
+      const result = await fetchOrderList(
+        payload.shopId,
+        payload.requestedCount,
+        payload.baseParams,
+        {
+          credentials: payload.credentials ?? "include",
+        }
+      );
+      return {
+        success: true,
+        data: result,
+      };
+    }
+
+    if (message.action === ETSY_CONTENT_BRIDGE_ACTIONS.conversationImagesCollect) {
+      return {
+        success: true,
+        data: collectConversationImagesFromPage(),
+      };
+    }
+
+    if (message.action === ETSY_CONTENT_BRIDGE_ACTIONS.imagesZipDownload) {
+      const payload = message.payload as EtsyImagesZipDownloadPayload;
+      const data = await buildImagesZipData(payload.urls, payload.orderNumber);
+      return {
+        success: true,
+        data,
+      };
+    }
+
+    return {
+      success: false,
+      error: {
+        code: "ETSY_CONTENT_ACTION_UNKNOWN",
+        message: `未知 Etsy content action: ${message.action}`,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: {
+        code: "ETSY_CONTENT_REQUEST_FAILED",
+        message: error instanceof Error ? error.message : "Etsy 请求失败",
+      },
     };
   }
 }
@@ -427,9 +583,9 @@ export default defineContentScript({
 
         const targetIdSet = new Set(orderIds.map((v) => String(v)));
         const filteredOrders = orders.filter((o) =>
-          targetIdSet.has(String((o as any).order_id))
+          targetIdSet.has(String(o.order_id))
         );
-        const foundIds = filteredOrders.map((o) => String((o as any).order_id));
+        const foundIds = filteredOrders.map((o) => String(o.order_id));
         const foundIdSet = new Set(foundIds);
         const missingIds = orderIds.filter((id) => !foundIdSet.has(String(id)));
         if (missingIds.length > 0) {
@@ -473,8 +629,8 @@ export default defineContentScript({
 
         console.log("[待处理监听] 同步 步骤 3/4：映射为表格行 mapOrdersToTableRows");
         const rows: ExportTableRow[] = mapOrdersToTableRows(
-          filteredOrders as any,
-          buyers as any,
+          filteredOrders as EtsyOrder[],
+          buyers as EtsyBuyer[],
           { shopId }
         );
         console.log("[待处理监听] mapOrdersToTableRows 完成", {
@@ -567,30 +723,74 @@ export default defineContentScript({
             body?: string | null;
             status?: number;
             ok?: boolean;
+            event?: string;
+            payload?: {
+              requestId?: string;
+              url?: string;
+              method?: string;
+              body?: string | null;
+              status?: number;
+              ok?: boolean;
+            };
+            meta?: {
+              source?: string;
+            };
           }
         | undefined;
 
-      const isMoveOrdersEvent =
-        data?.type === "etsy-move-orders-request" ||
-        data?.type === "etsy-move-orders-response";
-      if (isMoveOrdersEvent) {
+      const normalizedType =
+        data?.type === "etsy-move-orders-request"
+          ? "moveOrders.requested"
+          : data?.type === "etsy-move-orders-response"
+            ? "moveOrders.responded"
+            : data?.type === ETSY_BRIDGE_EVENT_TYPE
+              ? data.event
+              : undefined;
+
+      const normalizedPayload =
+        data?.type === ETSY_BRIDGE_EVENT_TYPE ? data.payload : data;
+      const normalizedSource =
+        data?.type === ETSY_BRIDGE_EVENT_TYPE ? data.meta?.source : data?.source;
+
+      const normalizedMoveOrdersMessage =
+        normalizedType === "moveOrders.requested" ||
+        normalizedType === "moveOrders.responded"
+          ? {
+              type: normalizedType,
+              source: normalizedSource,
+              requestId: normalizedPayload?.requestId,
+              url: normalizedPayload?.url,
+              method: normalizedPayload?.method,
+              body: normalizedPayload?.body,
+              status: normalizedPayload?.status,
+              ok: normalizedPayload?.ok,
+            }
+          : null;
+
+      if (normalizedMoveOrdersMessage) {
         console.log("[待处理监听] 收到 move-orders 相关消息", {
-          type: data.type,
-          requestId: data.requestId,
-          source: data.source,
+          type: normalizedMoveOrdersMessage.type,
+          requestId: normalizedMoveOrdersMessage.requestId,
+          source: normalizedMoveOrdersMessage.source,
         });
       }
 
-      if (!data || data.source !== "page-inject") return;
+      if (!normalizedMoveOrdersMessage) return;
+      if (
+        normalizedMoveOrdersMessage.source !== "page-inject" &&
+        normalizedMoveOrdersMessage.source !== "page"
+      ) {
+        return;
+      }
 
-      if (data.type === "etsy-move-orders-request") {
+      if (normalizedMoveOrdersMessage.type === "moveOrders.requested") {
         void (async () => {
           console.log("[待处理监听] 步骤 1/5：开始处理 move-orders 请求");
           try {
             console.log("[待处理监听] 步骤 2/5：获取 Etsy 数据（shopId、orderStates）");
             const { shopId, orderStates } = await ensureEtsyData();
             console.log("[待处理监听] ensureEtsyData 结果", {
-              requestId: data.requestId,
+              requestId: normalizedMoveOrdersMessage.requestId,
               shopId,
               shopIdOk: shopId != null,
               orderStatesCount: orderStates?.length ?? 0,
@@ -599,12 +799,15 @@ export default defineContentScript({
             });
 
             let parsedBody: any = null;
-            const bodyStr = typeof data.body === "string" ? data.body : "";
+            const bodyStr =
+              typeof normalizedMoveOrdersMessage.body === "string"
+                ? normalizedMoveOrdersMessage.body
+                : "";
             if (bodyStr.trim()) {
               try {
                 parsedBody = JSON.parse(bodyStr);
                 console.log("[待处理监听] 请求 body 解析成功", {
-                  requestId: data.requestId,
+                  requestId: normalizedMoveOrdersMessage.requestId,
                   hasOrderStateId: parsedBody?.order_state_id != null,
                   orderIdsLength: Array.isArray(parsedBody?.order_ids)
                     ? parsedBody.order_ids.length
@@ -612,13 +815,15 @@ export default defineContentScript({
                 });
               } catch {
                 console.warn("[待处理监听] 请求 body JSON 解析失败", {
-                  requestId: data.requestId,
+                  requestId: normalizedMoveOrdersMessage.requestId,
                   bodyLength: bodyStr.length,
                   bodyPreview: bodyStr.slice(0, 200),
                 });
               }
             } else {
-              console.warn("[待处理监听] 请求 body 为空", { requestId: data.requestId });
+              console.warn("[待处理监听] 请求 body 为空", {
+                requestId: normalizedMoveOrdersMessage.requestId,
+              });
             }
 
             const orderStateId: number | undefined = parsedBody?.order_state_id;
@@ -632,7 +837,7 @@ export default defineContentScript({
                 : "";
 
             console.log("[待处理监听] 步骤 3/5：解析请求参数", {
-              requestId: data.requestId,
+              requestId: normalizedMoveOrdersMessage.requestId,
               orderStateId,
               stateName,
               orderIdsCount: orderIds.length,
@@ -642,12 +847,15 @@ export default defineContentScript({
               orderIds,
               "order_state_change_requested",
               {
-                requestId: data.requestId,
+                requestId: normalizedMoveOrdersMessage.requestId,
                 orderStateId,
                 stateName,
-                requestUrl: data.url ?? "",
-                requestMethod: data.method ?? "",
-                requestBody: typeof data.body === "string" ? data.body : "",
+                requestUrl: normalizedMoveOrdersMessage.url ?? "",
+                requestMethod: normalizedMoveOrdersMessage.method ?? "",
+                requestBody:
+                  typeof normalizedMoveOrdersMessage.body === "string"
+                    ? normalizedMoveOrdersMessage.body
+                    : "",
                 pageUrl: location.href,
               }
             );
@@ -660,7 +868,7 @@ export default defineContentScript({
             const normalizedName = (stateName ?? "").trim().toLowerCase();
             const shouldTriggerAutoSync = true;
             console.log("[待处理监听] 步骤 4/5：判断是否为目标状态「待处理」", {
-              requestId: data.requestId,
+              requestId: normalizedMoveOrdersMessage.requestId,
               stateName,
               normalizedName,
               shouldTriggerAutoSync,
@@ -671,15 +879,15 @@ export default defineContentScript({
             });
 
             if (shouldTriggerAutoSync) {
-              if (data.requestId) {
-                pendingMoveToNewByRequestId.set(data.requestId, {
+              if (normalizedMoveOrdersMessage.requestId) {
+                pendingMoveToNewByRequestId.set(normalizedMoveOrdersMessage.requestId, {
                   shopId,
                   targetStateId: orderStateId,
                   targetStateName: stateName,
                   orderIds,
                 });
                 console.log("[待处理监听] 步骤 5/5：已写入缓存，等待响应", {
-                  requestId: data.requestId,
+                  requestId: normalizedMoveOrdersMessage.requestId,
                   cachedShopId: shopId,
                   targetStateId: orderStateId,
                   orderIdsCount: orderIds.length,
@@ -694,13 +902,13 @@ export default defineContentScript({
               }
             } else {
               console.log("[待处理监听] 非待处理状态，不缓存", {
-                requestId: data.requestId,
+                requestId: normalizedMoveOrdersMessage.requestId,
                 stateName,
               });
             }
           } catch (err) {
             console.error("[待处理监听] 处理 move-orders 请求异常", {
-              requestId: data.requestId,
+              requestId: normalizedMoveOrdersMessage.requestId,
               error: err,
               errorMessage: err instanceof Error ? err.message : String(err),
             });
@@ -708,14 +916,17 @@ export default defineContentScript({
         })();
       }
 
-      if (data.type === "etsy-move-orders-response") {
+      if (normalizedMoveOrdersMessage.type === "moveOrders.responded") {
         void (async () => {
-          const requestId = data.requestId;
+          const requestId = normalizedMoveOrdersMessage.requestId;
           console.log("[待处理监听] 响应 步骤 1/6：收到 move-orders 响应", {
             requestId,
-            status: data.status,
-            ok: data.ok,
-            bodyLength: typeof data.body === "string" ? data.body.length : 0,
+            status: normalizedMoveOrdersMessage.status,
+            ok: normalizedMoveOrdersMessage.ok,
+            bodyLength:
+              typeof normalizedMoveOrdersMessage.body === "string"
+                ? normalizedMoveOrdersMessage.body.length
+                : 0,
           });
 
           if (!requestId) {
@@ -740,9 +951,12 @@ export default defineContentScript({
               occurredAt: new Date().toISOString(),
               data: {
                 requestId,
-                status: data.status,
-                ok: data.ok,
-                responseBody: typeof data.body === "string" ? data.body : "",
+                status: normalizedMoveOrdersMessage.status,
+                ok: normalizedMoveOrdersMessage.ok,
+                responseBody:
+                  typeof normalizedMoveOrdersMessage.body === "string"
+                    ? normalizedMoveOrdersMessage.body
+                    : "",
                 pageUrl: location.href,
               },
             });
@@ -755,14 +969,14 @@ export default defineContentScript({
           });
 
           const isSuccess =
-            data.ok === true &&
-            typeof data.status === "number" &&
-            data.status >= 200 &&
-            data.status < 300;
+            normalizedMoveOrdersMessage.ok === true &&
+            typeof normalizedMoveOrdersMessage.status === "number" &&
+            normalizedMoveOrdersMessage.status >= 200 &&
+            normalizedMoveOrdersMessage.status < 300;
           console.log("[待处理监听] 响应 步骤 3/6：检查 HTTP 状态", {
             requestId,
-            status: data.status,
-            ok: data.ok,
+            status: normalizedMoveOrdersMessage.status,
+            ok: normalizedMoveOrdersMessage.ok,
             isSuccess,
             willTrigger: isSuccess,
           });
@@ -770,16 +984,19 @@ export default defineContentScript({
           if (!isSuccess) {
             console.warn("[待处理监听] 响应非 2xx，取消同步到 KST", {
               requestId,
-              status: data.status,
+              status: normalizedMoveOrdersMessage.status,
             });
             emitLogsForOrderIds(
               pending.orderIds,
               "order_state_change_failed",
               {
                 requestId,
-                status: data.status,
-                ok: data.ok,
-                responseBody: typeof data.body === "string" ? data.body : "",
+                status: normalizedMoveOrdersMessage.status,
+                ok: normalizedMoveOrdersMessage.ok,
+                responseBody:
+                  typeof normalizedMoveOrdersMessage.body === "string"
+                    ? normalizedMoveOrdersMessage.body
+                    : "",
                 targetStateId: pending.targetStateId,
                 targetStateName: pending.targetStateName ?? "",
                 pageUrl: location.href,
@@ -837,9 +1054,12 @@ export default defineContentScript({
             "order_state_change_succeeded",
             {
               requestId,
-              status: data.status,
-              ok: data.ok,
-              responseBody: typeof data.body === "string" ? data.body : "",
+              status: normalizedMoveOrdersMessage.status,
+              ok: normalizedMoveOrdersMessage.ok,
+              responseBody:
+                typeof normalizedMoveOrdersMessage.body === "string"
+                  ? normalizedMoveOrdersMessage.body
+                  : "",
               targetStateId: pending.targetStateId,
               targetStateName: pending.targetStateName ?? "",
               pageUrl: location.href,
@@ -869,189 +1089,21 @@ export default defineContentScript({
       }
     });
 
-    // 监听来自 popup 的消息，返回当前页面的 cookie 或 shopId
+    // 监听来自 popup / 扩展页的统一 Etsy content bridge 请求
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log(
         "🚀 ~ browser.runtime.onMessage.addListener ~ message:",
         message
       );
 
-      if (message.type === "GET_COOKIES") {
-        try {
-          // 从当前页面获取完整的 cookie
-          const cookies = document.cookie;
-          sendResponse({ success: true, cookies });
-        } catch (error) {
-          console.error("获取 cookie 失败:", error);
-          sendResponse({
-            success: false,
-            error: error instanceof Error ? error.message : "未知错误",
-          });
-        }
-        return true; // 保持消息通道开放，用于异步响应
-      }
-
-      if (message.type === "GET_SHOP_ID") {
-        // 通过 postMessage 与主世界脚本通信获取 Etsy 数据
-        getEtsyDataFromMainWorld()
-          .then((result) => {
-            sendResponse(result);
-          })
-          .catch((error) => {
-            console.error("获取 Etsy 数据失败:", error);
-            sendResponse({
-              success: false,
-              error: error instanceof Error ? error.message : "未知错误",
-            });
-          });
-        return true; // 保持消息通道开放，用于异步响应
-      }
-
-      if (message.type === "GET_MSG_LIST_IMAGES") {
-        try {
-          const container =
-            document.querySelector("#msg-list-container") ??
-            document.querySelector(".msg-list-container");
-
-          if (!container) {
-            sendResponse({
-              success: false,
-              error: "未找到 msg-list-container，请确保在聊天页面打开",
-            });
-            return true;
-          }
-
-          const links = container.querySelectorAll("a");
-          const urlSet = new Set<string>();
-          links.forEach((a) => {
-            const href = (a.getAttribute("href") ?? a.href)?.trim();
-            if (href) urlSet.add(href);
-          });
-          const urls = Array.from(urlSet);
-
-          sendResponse({ success: true, urls });
-        } catch (error) {
-          console.error("获取聊天图片链接失败:", error);
-          sendResponse({
-            success: false,
-            error: error instanceof Error ? error.message : "未知错误",
-          });
-        }
+      if ((message as { type?: string })?.type === ETSY_CONTENT_BRIDGE_MESSAGE_TYPE) {
+        void handleEtsyContentBridgeRequest(
+          message as EtsyContentBridgeRequest
+        ).then(sendResponse);
         return true;
       }
 
-      if (message.type === "GET_ORDER_NUMBER") {
-        try {
-          const buyerInfo = document.querySelector(".buyer-info");
-          if (!buyerInfo) {
-            sendResponse({
-              success: true,
-              orderNumber: "",
-              error: "未找到 buyer-info 区域",
-            });
-            return true;
-          }
-
-          const listUnstyled = buyerInfo.querySelector(".wt-list-unstyled");
-          if (!listUnstyled) {
-            sendResponse({
-              success: true,
-              orderNumber: "",
-              error: "未找到 wt-list-unstyled",
-            });
-            return true;
-          }
-
-          const truncateEl = listUnstyled.querySelector(".wt-text-truncate");
-          const orderNumber = truncateEl
-            ? (truncateEl.textContent ?? "").trim()
-            : "";
-
-          sendResponse({ success: true, orderNumber });
-        } catch (error) {
-          console.error("获取订单号失败:", error);
-          sendResponse({
-            success: false,
-            orderNumber: "",
-            error: error instanceof Error ? error.message : "未知错误",
-          });
-        }
-        return true;
-      }
-
-      if (message.type === "DOWNLOAD_IMAGES_AS_ZIP") {
-        const { urls, orderNumber } = message as {
-          urls: string[];
-          orderNumber: string;
-        };
-        if (!urls?.length) {
-          sendResponse({ success: false, error: "没有选中图片" });
-          return true;
-        }
-
-        (async () => {
-          try {
-            await injectScript("page-inject.js");
-            const requestId = `fetch-images-zip-${Date.now()}-${Math.random()}`;
-
-            const imagesBase64 = await new Promise<string[]>((resolve, reject) => {
-              const timeout = setTimeout(() => {
-                window.removeEventListener("message", handleResponse);
-                reject(new Error("主世界拉取图片超时"));
-              }, 60000);
-
-              function handleResponse(event: MessageEvent) {
-                if (event.source !== window) return;
-                const data = event.data;
-                if (
-                  data?.type === "fetch-images-for-zip-response" &&
-                  data.requestId === requestId
-                ) {
-                  clearTimeout(timeout);
-                  window.removeEventListener("message", handleResponse);
-                  if (data.success && Array.isArray(data.images)) {
-                    resolve(data.images);
-                  } else {
-                    reject(new Error(data?.error ?? "拉取图片失败"));
-                  }
-                }
-              }
-
-              window.addEventListener("message", handleResponse);
-              window.postMessage(
-                { type: "fetch-images-for-zip", urls, requestId },
-                "*"
-              );
-            });
-
-            function getExt(url: string): string {
-              try {
-                const pathname = new URL(url, "https://x").pathname;
-                const m = pathname.match(/\.(jpe?g|png|gif|webp|bmp)(\?|$)/i);
-                return m ? m[1].toLowerCase() : "jpg";
-              } catch {
-                return "jpg";
-              }
-            }
-
-            const zip = new JSZip();
-            for (let i = 0; i < imagesBase64.length; i++) {
-              const ext = getExt(urls[i]);
-              zip.file(`image_${i + 1}.${ext}`, imagesBase64[i], { base64: true });
-            }
-            const zipBase64 = await zip.generateAsync({ type: "base64" });
-            const filename =
-              (orderNumber || "images").replace(/[/\\?*:|"]/g, "_") + ".zip";
-            sendResponse({ success: true, zipBase64, filename });
-          } catch (err) {
-            sendResponse({
-              success: false,
-              error: err instanceof Error ? err.message : "打包失败",
-            });
-          }
-        })();
-        return true;
-      }
+      return false;
     });
 
     // 等待 DOM 完全加载

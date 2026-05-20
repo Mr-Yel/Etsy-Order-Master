@@ -1,6 +1,7 @@
 /**
  * DOM 操作工具函数
  */
+import { setEtsyInputValue, setEtsySelectOption } from "@/lib/etsy-bridge-client";
 
 /**
  * 修改 select 下拉框的选中选项
@@ -10,60 +11,18 @@
  * @returns Promise<boolean> 是否成功修改
  */
 export function changeSelectOption(orderNumber: string, optionValue: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    try {
-      // 生成唯一的请求 ID
-      const requestId = `change-select-${Date.now()}-${Math.random()}`;
-
-      // 设置超时
-      const timeout = setTimeout(() => {
-        window.removeEventListener("message", handleResponse);
-        console.warn("⚠️ [隔离世界] 修改 select 选项超时");
-        resolve(false);
-      }, 3000); // 3秒超时
-
-      // 处理响应
-      function handleResponse(event: MessageEvent) {
-        // 确保消息来自当前窗口
-        if (event.source !== window) return;
-
-        // 检查消息类型和请求 ID
-        if (
-          event.data &&
-          event.data.type === "change-select-option-response" &&
-          event.data.requestId === requestId
-        ) {
-          clearTimeout(timeout);
-          window.removeEventListener("message", handleResponse);
-
-          if (event.data.success) {
-            console.log(`✅ [隔离世界] 成功修改 select 选项: ${optionValue}`);
-            resolve(true);
-          } else {
-            console.warn(`⚠️ [隔离世界] 修改 select 选项失败:`, event.data.error);
-            resolve(false);
-          }
-        }
-      }
-
-      // 监听响应消息
-      window.addEventListener("message", handleResponse);
-
-      // 发送请求到主世界
-      window.postMessage(
-        {
-          type: "change-select-option",
-          requestId: requestId,
-          orderNumber: orderNumber,
-          optionValue: optionValue,
-        },
-        "*"
-      );
-    } catch (error) {
-      console.error("❌ [隔离世界] 修改 select 选项时发生错误:", error);
-      resolve(false);
-    }
-  });
+  return setEtsySelectOption({
+    orderNumber,
+    optionValue,
+  })
+    .then(() => {
+      console.log(`✅ [隔离世界] 成功修改 select 选项: ${optionValue}`);
+      return true;
+    })
+    .catch((error) => {
+      console.warn("⚠️ [隔离世界] 修改 select 选项失败:", error);
+      return false;
+    });
 }
 
 /**
@@ -260,61 +219,19 @@ export function changeInputValue(
   value: string,
   triggerEvents: boolean = true
 ): Promise<boolean> {
-  return new Promise((resolve) => {
-    try {
-      // 生成唯一的请求 ID
-      const requestId = `change-input-${Date.now()}-${Math.random()}`;
-
-      // 设置超时
-      const timeout = setTimeout(() => {
-        window.removeEventListener("message", handleResponse);
-        console.warn("⚠️ [隔离世界] 修改 input 值超时");
-        resolve(false);
-      }, 3000); // 3秒超时
-
-      // 处理响应
-      function handleResponse(event: MessageEvent) {
-        // 确保消息来自当前窗口
-        if (event.source !== window) return;
-
-        // 检查消息类型和请求 ID
-        if (
-          event.data &&
-          event.data.type === "change-input-value-response" &&
-          event.data.requestId === requestId
-        ) {
-          clearTimeout(timeout);
-          window.removeEventListener("message", handleResponse);
-
-          if (event.data.success) {
-            console.log(`✅ [隔离世界] 成功修改 input 值: ${value}`);
-            resolve(true);
-          } else {
-            console.warn(`⚠️ [隔离世界] 修改 input 值失败:`, event.data.error);
-            resolve(false);
-          }
-        }
-      }
-
-      // 监听响应消息
-      window.addEventListener("message", handleResponse);
-
-      // 发送请求到主世界
-      window.postMessage(
-        {
-          type: "change-input-value",
-          requestId: requestId,
-          selector: selector,
-          value: value,
-          triggerEvents: triggerEvents,
-        },
-        "*"
-      );
-    } catch (error) {
-      console.error("❌ [隔离世界] 修改 input 值时发生错误:", error);
-      resolve(false);
-    }
-  });
+  return setEtsyInputValue({
+    selector,
+    value,
+    triggerEvents,
+  })
+    .then(() => {
+      console.log(`✅ [隔离世界] 成功修改 input 值: ${value}`);
+      return true;
+    })
+    .catch((error) => {
+      console.warn("⚠️ [隔离世界] 修改 input 值失败:", error);
+      return false;
+    });
 }
 
 /**

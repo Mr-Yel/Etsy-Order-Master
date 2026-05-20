@@ -1,3 +1,5 @@
+import { getEtsyBridgeContext } from "./etsy-bridge-client";
+
 export type OrderState = {
   type: string;
   order_state_id: number;
@@ -61,8 +63,6 @@ export function resetEtsyContextCache(): void {
 export function ensureEtsyContextFromMainWorld(
   options?: { timeoutMs?: number }
 ): Promise<EtsyContextResult> {
-  const timeoutMs = options?.timeoutMs ?? 5000;
-
   if (cachedResult.status === "ready" || cachedResult.status === "error") {
     return Promise.resolve(cachedResult);
   }
@@ -81,86 +81,39 @@ export function ensureEtsyContextFromMainWorld(
     return Promise.resolve(result);
   }
 
-  inFlightPromise = new Promise<EtsyContextResult>((resolve) => {
-    const requestId = `etsy-context-${Date.now()}-${Math.random()}`;
+  cachedResult = {
+    status: "loading",
+    context: null,
+  };
 
-    const timeout = window.setTimeout(() => {
-      window.removeEventListener("message", handleResponse as any);
-      const result: EtsyContextResult = {
-        status: "error",
-        context: null,
-        error: "获取 Etsy 数据超时",
-      };
-      cachedResult = result;
-      inFlightPromise = null;
-      resolve(result);
-    }, timeoutMs);
-
-    const handleResponse = (event: MessageEvent) => {
-      if (event.source !== window) return;
-      const data = event.data as {
-        type?: string;
-        requestId?: string;
-        success?: boolean;
-        context?: RawEtsyContext;
-        shopId?: number;
-        orderStates?: OrderState[];
-        error?: string;
-      } | null;
-
-      if (
-        !data ||
-        data.type !== "etsy-context:response" ||
-        data.requestId !== requestId
-      ) {
-        return;
-      }
-
-      window.clearTimeout(timeout);
-      window.removeEventListener("message", handleResponse as any);
-
-      if (!data.success) {
-        const result: EtsyContextResult = {
-          status: "error",
-          context: null,
-          error: data.error || "无法获取 Etsy 数据",
-        };
-        cachedResult = result;
-        inFlightPromise = null;
-        resolve(result);
-        return;
-      }
-
+  inFlightPromise = (async () => {
+    try {
+      const data = await getEtsyBridgeContext({
+        timeoutMs: options?.timeoutMs,
+      });
       const context: EtsyContext = {
-        raw: data.context ?? null,
+        raw: data.raw ?? null,
         shopId: data.shopId,
-        orderStates: data.orderStates,
+        orderStates: data.orderStates as OrderState[] | undefined,
       };
-
       const result: EtsyContextResult = {
         status: "ready",
         context,
       };
       cachedResult = result;
+      return result;
+    } catch (error) {
+      const result: EtsyContextResult = {
+        status: "error",
+        context: null,
+        error: error instanceof Error ? error.message : "无法获取 Etsy 数据",
+      };
+      cachedResult = result;
+      return result;
+    } finally {
       inFlightPromise = null;
-      resolve(result);
-    };
-
-    window.addEventListener("message", handleResponse as any);
-
-    window.postMessage(
-      {
-        type: "etsy-context:get",
-        requestId,
-      },
-      "*"
-    );
-
-    cachedResult = {
-      status: "loading",
-      context: null,
-    };
-  });
+    }
+  })();
 
   return inFlightPromise;
 }

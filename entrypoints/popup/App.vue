@@ -46,6 +46,7 @@
 import { ref, onMounted } from "vue";
 import OrderExport from "@/components/OrderExport.vue";
 import ImageDownload from "@/components/ImageDownload.vue";
+import { getEtsyContextFromActiveTab } from "@/lib/etsy-tab-client";
 import { useAuth } from "@/composables/useAuth";
 
 type TabId = "order" | "image";
@@ -56,19 +57,8 @@ const shopId = ref<number | null>(null);
 
 const loadShopId = async () => {
   try {
-    const tabs = await browser.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-
-    if (!tabs.length || !tabs[0].id) return;
-
-    const tabId = tabs[0].id;
-    const response = await browser.tabs.sendMessage(tabId, {
-      type: "GET_SHOP_ID",
-    });
-
-    if (response?.success && typeof response.shopId === "number") {
+    const response = await getEtsyContextFromActiveTab();
+    if (typeof response.shopId === "number") {
       shopId.value = response.shopId;
     }
   } catch (error) {

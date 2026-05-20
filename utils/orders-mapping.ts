@@ -1,4 +1,9 @@
 import { getExportOrderId } from "./order-id-rules";
+import type {
+  EtsyBuyer,
+  EtsyOrder,
+  EtsyOrderTransaction,
+} from "@/types/etsy-order";
 
 /**
  * 将订单列表接口返回的 orders + buyers 映射为导出表行
@@ -48,56 +53,6 @@ export const EXPORT_COLUMNS = [
 ] as const;
 
 export type ExportTableRow = Record<(typeof EXPORT_COLUMNS)[number], string>;
-
-type RawTransaction = {
-  quantity?: number;
-  transaction_id?: number;
-  product?: { product_identifier?: string; title?: string };
-};
-
-type RawOrder = {
-  order_id: number;
-  transaction_ids?: number[];
-  order_date?: number;
-  buyer_id?: number;
-  fulfillment?: {
-    actual_ship_date?: number | null;
-    expected_ship_date?: number;
-    to_address?: {
-      name?: string;
-      first_line?: string;
-      second_line?: string;
-      city?: string;
-      state?: string;
-      zip?: string;
-      country?: string;
-    };
-  };
-  payment?: {
-    payment_date?: number;
-    payment_method?: string;
-    is_in_person_payment?: boolean;
-    cost_breakdown?: {
-      items_cost?: { value?: number; currency_code?: string };
-      total_cost?: { value?: number; currency_code?: string };
-      discount?: { value?: number };
-      shipping_discount?: { value?: number };
-      shipping_cost?: { value?: number };
-      tax_cost?: { value?: number };
-      adjusted_total_cost?: { value?: number };
-    };
-    sellermarketing_coupons?: Array<{ code?: string; percentage?: number }>;
-  };
-  transactions?: RawTransaction[];
-  [key: string]: unknown;
-};
-
-type RawBuyer = {
-  buyer_id?: number;
-  username?: string;
-  name?: string;
-  [key: string]: unknown;
-};
 
 /** 销售日期：Unix 时间戳（秒）按 UTC → MM/DD/YY，避免本地时区导致日期偏移 */
 function formatSaleDate(ts: number | undefined): string {
@@ -175,12 +130,12 @@ export type MapOrdersOptions = {
 };
 
 export function mapOrdersToTableRows(
-  orders: RawOrder[],
-  buyers: RawBuyer[],
+  orders: EtsyOrder[],
+  buyers: EtsyBuyer[],
   options: MapOrdersOptions = {}
 ): ExportTableRow[] {
   const { shopId } = options;
-  const buyerMap = new Map<number, RawBuyer>();
+  const buyerMap = new Map<number, EtsyBuyer>();
   buyers.forEach((b) => {
     if (b.buyer_id != null) buyerMap.set(b.buyer_id, b);
   });
@@ -197,10 +152,10 @@ export function mapOrdersToTableRows(
     const couponCode = firstCoupon?.code ?? "";
     const couponDetails = formatCouponDetails(firstCoupon?.percentage);
     const fallbackTransactionIds = order.transaction_ids ?? [];
-    const transactions: RawTransaction[] =
+    const transactions: EtsyOrderTransaction[] =
       order.transactions != null && order.transactions.length > 0
         ? order.transactions
-        : [{}];
+        : [{ type: "Etsy_Order_Transaction" }];
 
     return transactions.map((transaction, index) => {
       const fallbackTransactionId = fallbackTransactionIds[index];

@@ -1,9 +1,11 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted } from "vue";
 import OrderExportModal from "./OrderExportModal.vue";
+import OrderImageExportModal from "./OrderImageExportModal.vue";
 import { ensureSession } from "@/lib/auth-manager";
 
 const showModal = ref(false);
+const showImageExportModal = ref(false);
 const targetEl = ref<HTMLElement | null>(null);
 let injectedContainer: HTMLElement | null = null;
 
@@ -13,6 +15,14 @@ const openModal = () => {
 
 const closeModal = () => {
   showModal.value = false;
+};
+
+const openImageExportModal = () => {
+  showImageExportModal.value = true;
+};
+
+const closeImageExportModal = () => {
+  showImageExportModal.value = false;
 };
 
 const TOOLBAR_SELECTOR =
@@ -94,7 +104,18 @@ onUnmounted(() => {
       <button type="button" class="order-export-btn" @click="openModal">
         订单管理
       </button>
+      <button
+        type="button"
+        class="order-export-btn order-image-export-btn"
+        @click="openImageExportModal"
+      >
+        订单图片导出
+      </button>
       <OrderExportModal v-if="showModal" @close="closeModal" />
+      <OrderImageExportModal
+        v-if="showImageExportModal"
+        @close="closeImageExportModal"
+      />
     </div>
   </teleport>
 </template>
@@ -104,6 +125,7 @@ onUnmounted(() => {
   padding-left: 10px;
   display: inline-flex;
   align-items: center;
+  gap: 8px;
 }
 
 .order-export-btn {
@@ -127,5 +149,14 @@ onUnmounted(() => {
 
 .order-export-btn:active {
   transform: translateY(0);
+}
+
+.order-image-export-btn {
+  background: #0f766e;
+  box-shadow: 0 1px 4px rgba(15, 118, 110, 0.32);
+}
+
+.order-image-export-btn:hover {
+  background: #0d9488;
 }
 </style>

@@ -9,6 +9,62 @@
 (function () {
   "use strict";
 
+  var ETSY_BRIDGE_REQUEST_TYPE = "ETSY_BRIDGE_REQUEST";
+  var ETSY_BRIDGE_RESPONSE_TYPE = "ETSY_BRIDGE_RESPONSE";
+  var ETSY_BRIDGE_EVENT_TYPE = "ETSY_BRIDGE_EVENT";
+  var ETSY_BRIDGE_VERSION = 1;
+
+  var ETSY_BRIDGE_ACTIONS = {
+    contextGet: "context.get",
+    domSelectSet: "dom.select.set",
+    domInputSet: "dom.input.set",
+    imagesFetchAsBase64: "images.fetchAsBase64",
+  };
+
+  function postBridgeSuccess(requestId, data) {
+    window.postMessage(
+      {
+        type: ETSY_BRIDGE_RESPONSE_TYPE,
+        requestId: requestId,
+        success: true,
+        data: data,
+      },
+      "*"
+    );
+  }
+
+  function postBridgeError(requestId, code, message, details) {
+    window.postMessage(
+      {
+        type: ETSY_BRIDGE_RESPONSE_TYPE,
+        requestId: requestId,
+        success: false,
+        error: {
+          code: code,
+          message: message,
+          details: details,
+        },
+      },
+      "*"
+    );
+  }
+
+  function postBridgeEvent(eventName, payload) {
+    window.postMessage(
+      {
+        type: ETSY_BRIDGE_EVENT_TYPE,
+        event: eventName,
+        payload: payload,
+        meta: {
+          source: "page",
+          version: ETSY_BRIDGE_VERSION,
+          timestamp: Date.now(),
+        },
+      },
+      "*"
+    );
+  }
+
   /**
    * 判断是否为需要拦截的 Etsy move-orders 接口
    * 例如：
@@ -80,6 +136,12 @@
               },
               "*"
             );
+            postBridgeEvent("moveOrders.requested", {
+              requestId: requestId,
+              url: url,
+              method: method,
+              body: requestBodyText,
+            });
           } catch (e) {
             // 忽略 postMessage 错误
           }
@@ -106,6 +168,13 @@
                     },
                     "*"
                   );
+                  postBridgeEvent("moveOrders.responded", {
+                    requestId: requestId,
+                    url: url,
+                    status: response.status,
+                    ok: response.ok,
+                    body: respText,
+                  });
                 } catch (e) {
                   // 忽略 postMessage 错误
                 }
@@ -163,6 +232,12 @@
               },
               "*"
             );
+            postBridgeEvent("moveOrders.requested", {
+              requestId: requestId,
+              url: _url,
+              method: _method,
+              body: typeof body === "string" ? body : null,
+            });
           } catch (e) {
             // 忽略 postMessage 错误
           }
@@ -181,6 +256,13 @@
                 },
                 "*"
               );
+              postBridgeEvent("moveOrders.responded", {
+                requestId: requestId,
+                url: _url,
+                status: xhr.status,
+                ok: xhr.status >= 200 && xhr.status < 300,
+                body: xhr.responseText,
+              });
             } catch (e) {
               // 忽略 postMessage 错误
             }
@@ -266,194 +348,136 @@
     }
   }
 
+  function getEtsyContextDataForBridge() {
+    var contextData = window.Etsy && window.Etsy.Context
+      ? window.Etsy.Context.data
+      : null;
+
+    if (!contextData) {
+      throw new Error("无法获取 Etsy 数据，请确保在 Etsy 店铺管理页面打开此扩展");
+    }
+
+    return {
+      raw: contextData,
+      shopId: contextData.shop_id,
+      orderStates: contextData.order_states,
+    };
+  }
+
+  function fetchImagesAsBase64(urls, onSuccess, onError) {
+    function arrayBufferToBase64(buffer) {
+      var bytes = new Uint8Array(buffer);
+      var binary = "";
+      for (var i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    }
+
+    Promise.all(
+      (urls || []).map(function (url) {
+        return fetch(url)
+          .then(function (res) {
+            if (!res.ok) throw new Error("fetch " + res.status);
+            return res.arrayBuffer();
+          })
+          .then(arrayBufferToBase64);
+      })
+    )
+      .then(onSuccess)
+      .catch(onError);
+  }
+
+  function handleBridgeRequest(data) {
+    var requestId = data && data.requestId;
+    var action = data && data.action;
+    var payload = data && data.payload ? data.payload : {};
+
+    if (!requestId || !action) {
+      return;
+    }
+
+    try {
+      if (action === ETSY_BRIDGE_ACTIONS.contextGet) {
+        postBridgeSuccess(requestId, getEtsyContextDataForBridge());
+        return;
+      }
+
+      if (action === ETSY_BRIDGE_ACTIONS.domSelectSet) {
+        var selectResult = changeSelectOptionInMainWorld(
+          payload.orderNumber,
+          payload.optionValue
+        );
+        if (selectResult && selectResult.success) {
+          postBridgeSuccess(requestId, selectResult);
+        } else {
+          postBridgeError(
+            requestId,
+            "DOM_SELECT_SET_FAILED",
+            (selectResult && selectResult.error) || "设置 select 失败",
+            selectResult
+          );
+        }
+        return;
+      }
+
+      if (action === ETSY_BRIDGE_ACTIONS.domInputSet) {
+        var inputResult = changeInputValueInMainWorld(
+          payload.selector,
+          payload.value,
+          payload.triggerEvents
+        );
+        if (inputResult && inputResult.success) {
+          postBridgeSuccess(requestId, inputResult);
+        } else {
+          postBridgeError(
+            requestId,
+            "DOM_INPUT_SET_FAILED",
+            (inputResult && inputResult.error) || "设置 input 失败",
+            inputResult
+          );
+        }
+        return;
+      }
+
+      if (action === ETSY_BRIDGE_ACTIONS.imagesFetchAsBase64) {
+        fetchImagesAsBase64(
+          payload.urls,
+          function (images) {
+            postBridgeSuccess(requestId, { images: images });
+          },
+          function (err) {
+            postBridgeError(
+              requestId,
+              "IMAGE_FETCH_FAILED",
+              err && err.message ? err.message : "拉取图片失败"
+            );
+          }
+        );
+        return;
+      }
+
+      postBridgeError(
+        requestId,
+        "UNKNOWN_ACTION",
+        "未知 Etsy bridge action: " + action
+      );
+    } catch (error) {
+      postBridgeError(
+        requestId,
+        "BRIDGE_HANDLER_ERROR",
+        error && error.message ? error.message : "桥接处理失败"
+      );
+    }
+  }
+
   // 监听来自隔离世界（ISOLATED world）的 content script 的消息
   window.addEventListener("message", function (event) {
     // 确保消息来自当前窗口
     if (event.source !== window) return;
 
-    // 处理获取 Etsy 数据的请求（旧协议，兼容保留）
-    if (event.data && event.data.type === "get-etsy-data") {
-      try {
-        // 在主世界中直接访问 window.Etsy.Context.data 对象
-        var etsyData = window.Etsy && window.Etsy.Context
-          ? window.Etsy.Context.data
-          : null;
-
-        if (etsyData) {
-          var shopId = etsyData.shop_id;
-          var orderStates = etsyData.order_states;
-
-          console.log("✅ [主世界] 成功获取 Etsy 数据");
-          console.log("📋 [主世界] shopId:", shopId);
-          console.log("📋 [主世界] order_states 数量:", (orderStates && orderStates.length) || 0);
-
-          // 发送响应回隔离世界
-          window.postMessage(
-            {
-              type: "etsy-data-response",
-              requestId: event.data.requestId,
-              success: true,
-              shopId: shopId,
-              orderStates: orderStates,
-            },
-            "*"
-          );
-        } else {
-          console.warn(
-            "⚠️ [主世界] 无法获取 Etsy 数据，window.Etsy.Context.data 不存在"
-          );
-
-          // 发送错误响应
-          window.postMessage(
-            {
-              type: "etsy-data-response",
-              requestId: event.data.requestId,
-              success: false,
-              error: "无法获取 Etsy 数据，请确保在 Etsy 店铺管理页面打开此扩展",
-            },
-            "*"
-          );
-        }
-      } catch (error) {
-        console.error("❌ [主世界] 获取 Etsy 数据失败:", error);
-
-        // 发送错误响应
-        window.postMessage(
-          {
-            type: "etsy-data-response",
-            requestId: event.data.requestId,
-            success: false,
-            error: error && error.message ? error.message : "未知错误",
-          },
-          "*"
-        );
-      }
-    }
-
-    // 新协议：返回完整 Etsy Context 数据，供统一服务使用
-    if (event.data && event.data.type === "etsy-context:get") {
-      try {
-        var contextData = window.Etsy && window.Etsy.Context
-          ? window.Etsy.Context.data
-          : null;
-
-        if (contextData) {
-          var contextShopId = contextData.shop_id;
-          var contextOrderStates = contextData.order_states;
-
-          window.postMessage(
-            {
-              type: "etsy-context:response",
-              requestId: event.data.requestId,
-              success: true,
-              context: contextData,
-              shopId: contextShopId,
-              orderStates: contextOrderStates,
-            },
-            "*"
-          );
-        } else {
-          window.postMessage(
-            {
-              type: "etsy-context:response",
-              requestId: event.data.requestId,
-              success: false,
-              error: "无法获取 Etsy 数据，请确保在 Etsy 店铺管理页面打开此扩展",
-            },
-            "*"
-          );
-        }
-      } catch (error) {
-        console.error("❌ [主世界] 获取 Etsy 上下文失败:", error);
-        window.postMessage(
-          {
-            type: "etsy-context:response",
-            requestId: event.data.requestId,
-            success: false,
-            error: error && error.message ? error.message : "未知错误",
-          },
-          "*"
-        );
-      }
-    }
-
-    // 处理修改 select 选项的请求
-    if (event.data && event.data.type === "change-select-option") {
-      const { orderNumber, optionValue, requestId } = event.data;
-      const result = changeSelectOptionInMainWorld(orderNumber, optionValue);
-      
-      // 发送响应回隔离世界
-      window.postMessage(
-        {
-          type: "change-select-option-response",
-          requestId: requestId,
-          ...result,
-        },
-        "*"
-      );
-    }
-
-    // 处理修改 input 值的请求
-    if (event.data && event.data.type === "change-input-value") {
-      const { selector, value, triggerEvents, requestId } = event.data;
-      const result = changeInputValueInMainWorld(selector, value, triggerEvents);
-      
-      // 发送响应回隔离世界
-      window.postMessage(
-        {
-          type: "change-input-value-response",
-          requestId: requestId,
-          ...result,
-        },
-        "*"
-      );
-    }
-
-    // 在主世界拉取图片（绕过 CORS），返回 base64 数组
-    if (event.data && event.data.type === "fetch-images-for-zip") {
-      const { urls, requestId } = event.data;
-      (function () {
-        function arrayBufferToBase64(buffer) {
-          const bytes = new Uint8Array(buffer);
-          let binary = "";
-          for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          return btoa(binary);
-        }
-        Promise.all(
-          (urls || []).map(function (url) {
-            return fetch(url)
-              .then(function (res) {
-                if (!res.ok) throw new Error("fetch " + res.status);
-                return res.arrayBuffer();
-              })
-              .then(arrayBufferToBase64);
-          })
-        )
-          .then(function (images) {
-            window.postMessage(
-              {
-                type: "fetch-images-for-zip-response",
-                requestId: requestId,
-                success: true,
-                images: images,
-              },
-              "*"
-            );
-          })
-          .catch(function (err) {
-            window.postMessage(
-              {
-                type: "fetch-images-for-zip-response",
-                requestId: requestId,
-                success: false,
-                error: err && err.message ? err.message : "拉取图片失败",
-              },
-              "*"
-            );
-          });
-      })();
+    if (event.data && event.data.type === ETSY_BRIDGE_REQUEST_TYPE) {
+      handleBridgeRequest(event.data);
     }
 
   });

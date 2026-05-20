@@ -156,11 +156,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { CSV_HEADERS, buildCSVContent, downloadCSV } from "@/utils/csv-utils";
+import type { OrderState } from "@/lib/etsy-context";
+import { getEtsyContextFromActiveTab, fetchEtsyOrdersFromActiveTab } from "@/lib/etsy-tab-client";
 import {
   convertOrderStatesToMap,
-  type OrderState,
 } from "@/composables/useOrderStates";
-import { fetchOrderList } from "@/composables/useFetchOrderList";
 
 // 订单类型定义
 type Order = {
@@ -232,29 +232,15 @@ async function getShopIdFromContentScript(): Promise<{
   orderStates: OrderState[] | null;
 }> {
   try {
-    const tabs = await browser.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-
-    if (tabs.length === 0 || !tabs[0].id) {
-      console.warn("未找到活动标签页");
-      return { shopId: null, orderStates: null };
-    }
-
-    const tabId = tabs[0].id;
-    const response = await browser.tabs.sendMessage(tabId, {
-      type: "GET_SHOP_ID",
-    });
-
-    if (response?.success && response?.shopId !== undefined) {
+    const response = await getEtsyContextFromActiveTab();
+    if (response.shopId !== undefined) {
       console.log("✅ 成功获取 shopId:", response.shopId);
       if (response.orderStates) {
-        const newMap = convertOrderStatesToMap(response.orderStates);
+        const newMap = convertOrderStatesToMap(response.orderStates as OrderState[]);
         orderStateIdMap.value = newMap;
         if (
           formParams.value.orderStateId === 0 &&
-          response.orderStates?.length > 0
+          (response.orderStates as OrderState[])?.length > 0
         ) {
           const firstStateId = Object.values(newMap)[0];
           if (firstStateId) {
@@ -264,49 +250,19 @@ async function getShopIdFromContentScript(): Promise<{
       }
       return {
         shopId: response.shopId,
-        orderStates: response.orderStates || null,
+        orderStates: (response.orderStates as OrderState[]) || null,
       };
-    } else {
-      console.warn("⚠️ 获取 Etsy 数据失败:", response?.error || "未知错误");
-      return { shopId: null, orderStates: null };
     }
+
+    console.warn("⚠️ 获取 Etsy 数据失败: 缺少 shopId");
+    return { shopId: null, orderStates: null };
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("Could not establish connection")
-    ) {
+    if (error instanceof Error && error.message.includes("Could not establish connection")) {
       console.error("Content script 未注入，可能需要刷新页面");
     } else {
       console.error("获取 Etsy 数据时发生错误:", error);
     }
     return { shopId: null, orderStates: null };
-  }
-}
-
-async function getCookiesFromBrowser(): Promise<string | null> {
-  try {
-    const tabs = await browser.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-    if (tabs.length === 0 || !tabs[0].url) {
-      console.warn("未找到活动标签页");
-      return null;
-    }
-    const urlObj = new URL(tabs[0].url);
-    const cookies = await browser.cookies.getAll({
-      domain: urlObj.hostname,
-    });
-    if (cookies.length === 0) {
-      console.warn("未找到任何 cookie");
-      return null;
-    }
-    return cookies
-      .map((cookie) => `${cookie.name}=${cookie.value}`)
-      .join("; ");
-  } catch (error) {
-    console.error("获取 cookie 时发生错误:", error);
-    return null;
   }
 }
 
@@ -354,11 +310,12 @@ async function fetchAndExportOrders() {
 
     const requestedLimit = formParams.value.limit;
     const baseParams = buildOrderListBaseParams();
-    const { orders: finalOrders } = await fetchOrderList(
-      currentShopId,
-      requestedLimit,
-      baseParams
-    );
+    const { orders: finalOrders } = await fetchEtsyOrdersFromActiveTab({
+      shopId: currentShopId,
+      requestedCount: requestedLimit,
+      baseParams,
+      credentials: "include",
+    });
 
     orderCount.value = finalOrders.length;
 

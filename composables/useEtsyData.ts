@@ -1,7 +1,7 @@
 import {
   type OrderState,
-  ensureEtsyContextFromMainWorld,
 } from "@/lib/etsy-context";
+import { getEtsyBridgeContext } from "@/lib/etsy-bridge-client";
 
 export type { OrderState };
 
@@ -19,26 +19,18 @@ export type EtsyDataResult = {
 
 export async function getEtsyData(): Promise<EtsyDataResult> {
   try {
-    const result = await ensureEtsyContextFromMainWorld();
-    if (result.status !== "ready" || !result.context) {
+    const context = await getEtsyBridgeContext();
+    if (context.shopId == null) {
       return {
         success: false,
-        error: result.error || "无法获取 Etsy 数据",
-      };
-    }
-
-    const { shopId, orderStates } = result.context;
-    if (shopId == null) {
-      return {
-        success: false,
-        error: "无法获取店铺 ID",
+        error: "无法获取 Etsy 数据",
       };
     }
 
     return {
       success: true,
-      shopId,
-      orderStates,
+      shopId: context.shopId,
+      orderStates: context.orderStates as OrderState[] | undefined,
     };
   } catch (error) {
     return {
