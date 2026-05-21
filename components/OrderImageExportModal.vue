@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from "vue";
+import type { Directive } from "vue";
 import JSZip from "jszip";
 import { getEtsyData } from "@/composables/useEtsyData";
 import {
@@ -26,6 +27,10 @@ type OrderImageExportRow = {
   transactionId: string;
   transactionIndex: number;
   sku: string;
+  variations: Array<{
+    property: string;
+    value: string;
+  }>;
   itemImageUrl: string;
   itemImageDownloadUrl: string;
   hasPersonalizationFiles: boolean;
@@ -43,6 +48,30 @@ const selected = ref<Set<string>>(new Set());
 const orderStateOptions = ref<{ label: string; value: number }[]>([]);
 const selectedOrderStateId = ref<number | "">("");
 const pageSize = ref(999);
+const previewImage = ref<{
+  url: string;
+  alt: string;
+  x: number;
+  y: number;
+} | null>(null);
+
+const vInitialText: Directive<HTMLElement, string> = {
+  mounted(el, binding) {
+    el.innerText = binding.value ?? "";
+  },
+  updated(el, binding) {
+    if (document.activeElement === el) return;
+    const next = binding.value ?? "";
+    if (el.innerText !== next) {
+      el.innerText = next;
+    }
+  },
+};
+const overflowTextPreview = ref<{
+  text: string;
+  x: number;
+  y: number;
+} | null>(null);
 
 const selectedRows = computed(() =>
   rows.value.filter((row) => selected.value.has(row.rowKey))
@@ -63,6 +92,62 @@ const selectedSkuCount = computed(
 
 function close() {
   emit("close");
+}
+
+function showImagePreview(url: string, alt: string, event: MouseEvent) {
+  if (!url) return;
+  updateImagePreviewPosition(event, url, alt);
+}
+
+function updateImagePreviewPosition(
+  event: MouseEvent,
+  url = previewImage.value?.url ?? "",
+  alt = previewImage.value?.alt ?? ""
+) {
+  if (!url) return;
+  const previewWidth = Math.min(420, Math.max(260, window.innerWidth * 0.42));
+  const previewHeight = Math.min(520, Math.max(240, window.innerHeight * 0.72));
+  const gap = 18;
+  const rightX = event.clientX + gap;
+  const leftX = event.clientX - previewWidth - gap;
+  const x =
+    rightX + previewWidth <= window.innerWidth - 12
+      ? rightX
+      : Math.max(12, leftX);
+  const y = Math.min(
+    Math.max(12, event.clientY - 12),
+    Math.max(12, window.innerHeight - previewHeight - 12)
+  );
+
+  previewImage.value = { url, alt, x, y };
+}
+
+function hideImagePreview() {
+  previewImage.value = null;
+}
+
+function showOverflowTextPreview(text: string, event: MouseEvent) {
+  const el = event.currentTarget as HTMLElement | null;
+  if (!el || el.scrollWidth <= el.clientWidth) return;
+  updateOverflowTextPreviewPosition(text, event);
+}
+
+function updateOverflowTextPreviewPosition(
+  text: string,
+  event: MouseEvent
+) {
+  if (!overflowTextPreview.value && !text) return;
+  const nextText = text || overflowTextPreview.value?.text || "";
+  if (!nextText) return;
+  overflowTextPreview.value = {
+    text: nextText,
+    x: Math.min(event.clientX + 12, window.innerWidth - 260),
+    y: Math.min(event.clientY + 14, window.innerHeight - 60),
+  };
+}
+
+function hideOverflowTextPreview() {
+  overflowTextPreview.value = null;
 }
 
 function toggleAll() {
@@ -89,13 +174,51 @@ function hasUploadVariation(transaction: EtsyOrderTransaction): boolean {
   });
 }
 
+function getPersonalizationNote(transaction: EtsyOrderTransaction): string {
+  return (
+    transaction.variations
+      ?.find(
+        (variation) =>
+          variation.property === "Personalization" &&
+          variation.question_type === "text_input"
+      )
+      ?.value?.trim() ?? ""
+  );
+}
+
 function normalizeSku(sku: string): string {
   const trimmed = sku.trim();
-  return trimmed || "未命名SKU";
+  if (!trimmed) return "未命名SKU";
+
+  const extracted = extractSkuByDxhRule(trimmed);
+  return extracted || trimmed;
+}
+
+function extractSkuByDxhRule(sku: string): string {
+  const match = sku.match(/(DG.*?D)XH/i);
+  return match?.[1] ?? "";
 }
 
 function hasSku(row: OrderImageExportRow): boolean {
   return row.sku.trim().length > 0;
+}
+
+function decodeHtmlEntities(value: string): string {
+  if (!value) return "";
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function getVariationFields(
+  transaction: EtsyOrderTransaction
+): Array<{ property: string; value: string }> {
+  return (transaction.variations ?? [])
+    .map((variation) => ({
+      property: decodeHtmlEntities((variation.property ?? "").trim()),
+      value: decodeHtmlEntities((variation.value ?? "").trim()),
+    }))
+    .filter((variation) => variation.property || variation.value);
 }
 
 function sanitizeFilePart(value: string): string {
@@ -153,13 +276,14 @@ function buildRows(orderList: EtsyOrder[]): OrderImageExportRow[] {
         transactionId,
         transactionIndex: index + 1,
         sku,
+        variations: getVariationFields(transaction),
         itemImageUrl: imageUrl,
         itemImageDownloadUrl: toLargeEtsyImageUrl(imageUrl),
         hasPersonalizationFiles: hasUploadVariation(transaction),
         attachments: [],
         attachmentStatus: hasUploadVariation(transaction) ? "loading" : "skipped",
         attachmentError: "",
-        noteText: "",
+        noteText: getPersonalizationNote(transaction),
       };
     });
   });
@@ -415,7 +539,16 @@ onMounted(() => {
                 <th>Order ID</th>
                 <th>商品图</th>
                 <th>订单附件</th>
-                <th>备注</th>
+                <th>变体信息</th>
+                <th>
+                  <span class="header-help-wrap">
+                    备注
+                    <span class="help-icon" aria-label="备注说明">?</span>
+                    <span class="header-help-tooltip">
+                      这里面的内容会被写入备注txt文件中
+                    </span>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -441,13 +574,23 @@ onMounted(() => {
                   </div>
                 </td>
                 <td>
-                  <img
-                    v-if="row.itemImageUrl"
-                    :src="row.itemImageUrl"
-                    class="thumb"
-                    loading="lazy"
-                    alt="商品图"
-                  />
+                  <span v-if="row.itemImageUrl" class="image-preview-wrap">
+                    <img
+                      :src="row.itemImageUrl"
+                      class="thumb"
+                      loading="lazy"
+                      alt="商品图"
+                      @mouseenter="
+                        showImagePreview(
+                          row.itemImageDownloadUrl || row.itemImageUrl,
+                          '商品图大图',
+                          $event
+                        )
+                      "
+                      @mousemove="updateImagePreviewPosition($event)"
+                      @mouseleave="hideImagePreview"
+                    />
+                  </span>
                   <span v-else class="muted">无商品图</span>
                 </td>
                 <td class="attachment-cell">
@@ -464,19 +607,66 @@ onMounted(() => {
                     未返回附件
                   </div>
                   <div v-else class="attachment-list">
-                    <img
+                    <span
                       v-for="file in row.attachments"
                       :key="file.fileId"
-                      :src="file.thumbnailUrl"
-                      :title="file.filename"
-                      class="thumb"
-                      loading="lazy"
-                      alt="订单附件"
-                    />
+                      class="image-preview-wrap"
+                    >
+                      <img
+                        :src="file.thumbnailUrl"
+                        :title="file.filename"
+                        class="thumb"
+                        loading="lazy"
+                        alt="订单附件"
+                        @mouseenter="showImagePreview(file.url, '订单附件大图', $event)"
+                        @mousemove="updateImagePreviewPosition($event)"
+                        @mouseleave="hideImagePreview"
+                      />
+                    </span>
+                  </div>
+                </td>
+                <td class="variations-cell">
+                  <div v-if="row.variations.length === 0" class="muted">
+                    无变体
+                  </div>
+                  <div v-else class="variation-form">
+                    <label
+                      v-for="(variation, index) in row.variations"
+                      :key="`${row.rowKey}-variation-${index}`"
+                      class="variation-field"
+                    >
+                      <span class="variation-label">
+                        <span
+                          class="variation-label-text"
+                          @mouseenter="
+                            showOverflowTextPreview(
+                              variation.property || '未命名',
+                              $event
+                            )
+                          "
+                          @mousemove="
+                            updateOverflowTextPreviewPosition(
+                              variation.property || '未命名',
+                              $event
+                            )
+                          "
+                          @mouseleave="hideOverflowTextPreview"
+                        >
+                          {{ variation.property || "未命名" }}
+                        </span>
+                      </span>
+                      <input
+                        class="variation-input"
+                        type="text"
+                        :value="variation.value"
+                        readonly
+                      />
+                    </label>
                   </div>
                 </td>
                 <td>
                   <div
+                    v-initial-text="row.noteText"
                     class="note-editor"
                     contenteditable="true"
                     data-placeholder="输入个性化备注"
@@ -500,6 +690,26 @@ onMounted(() => {
           {{ downloading ? "打包中..." : "下载总 ZIP" }}
         </button>
       </div>
+    </div>
+    <img
+      v-if="previewImage"
+      :src="previewImage.url"
+      :alt="previewImage.alt"
+      class="image-preview"
+      :style="{
+        left: `${previewImage.x}px`,
+        top: `${previewImage.y}px`,
+      }"
+    />
+    <div
+      v-if="overflowTextPreview"
+      class="text-preview"
+      :style="{
+        left: `${overflowTextPreview.x}px`,
+        top: `${overflowTextPreview.y}px`,
+      }"
+    >
+      {{ overflowTextPreview.text }}
     </div>
   </div>
 </template>
@@ -646,6 +856,54 @@ onMounted(() => {
   background: #f9fafb;
 }
 
+.header-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  background: #6b7280;
+  border-radius: 999px;
+  cursor: help;
+}
+
+.header-help-tooltip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 1003;
+  width: max-content;
+  max-width: 240px;
+  padding: 7px 9px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  background: rgba(17, 24, 39, 0.94);
+  border-radius: 6px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.header-help-wrap:hover .header-help-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .row-disabled td {
   background: #f9fafb;
   color: #9ca3af;
@@ -688,6 +946,26 @@ onMounted(() => {
   background: #f9fafb;
 }
 
+.image-preview-wrap {
+  display: inline-flex;
+  width: 58px;
+  height: 58px;
+}
+
+.image-preview {
+  position: fixed;
+  z-index: 1001;
+  width: min(420px, 42vw);
+  max-height: min(520px, 72vh);
+  object-fit: contain;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
 .attachment-cell {
   min-width: 150px;
 }
@@ -696,6 +974,64 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.variations-cell {
+  min-width: 220px;
+}
+
+.variation-form {
+  display: grid;
+  gap: 6px;
+}
+
+.variation-field {
+  display: grid;
+  grid-template-columns: 86px minmax(120px, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.variation-label {
+  color: #4b5563;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.variation-label-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.variation-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.3;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #f9fafb;
+  box-sizing: border-box;
+}
+
+.text-preview {
+  position: fixed;
+  z-index: 1002;
+  max-width: 360px;
+  padding: 6px 8px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.35;
+  background: rgba(17, 24, 39, 0.94);
+  border-radius: 6px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .note-editor {
