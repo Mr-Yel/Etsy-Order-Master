@@ -174,16 +174,11 @@ function hasUploadVariation(transaction: EtsyOrderTransaction): boolean {
   });
 }
 
-function getPersonalizationNote(transaction: EtsyOrderTransaction): string {
-  return (
-    transaction.variations
-      ?.find(
-        (variation) =>
-          variation.property === "Personalization" &&
-          variation.question_type === "text_input"
-      )
-      ?.value?.trim() ?? ""
-  );
+function getVariationNote(transaction: EtsyOrderTransaction): string {
+  return getVariationFields(transaction)
+    .filter((variation) => variation.property.toLowerCase() !== "photo")
+    .map((variation) => `${variation.property}：${variation.value}`)
+    .join("\n");
 }
 
 function normalizeSku(sku: string): string {
@@ -283,7 +278,7 @@ function buildRows(orderList: EtsyOrder[]): OrderImageExportRow[] {
         attachments: [],
         attachmentStatus: hasUploadVariation(transaction) ? "loading" : "skipped",
         attachmentError: "",
-        noteText: getPersonalizationNote(transaction),
+        noteText: getVariationNote(transaction),
       };
     });
   });
