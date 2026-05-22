@@ -186,11 +186,19 @@ function normalizeSku(sku: string): string {
   if (!trimmed) return "未命名SKU";
 
   const extracted = extractSkuByDxhRule(trimmed);
-  return extracted || trimmed;
+  if (extracted) return extracted;
+
+  const hyphenExtracted = extractSkuBetweenTwoHyphens(trimmed);
+  return hyphenExtracted || trimmed;
 }
 
 function extractSkuByDxhRule(sku: string): string {
   const match = sku.match(/(DG.*?D)XH/i);
+  return match?.[1] ?? "";
+}
+
+function extractSkuBetweenTwoHyphens(sku: string): string {
+  const match = sku.match(/^[^-]+-([^-]+)-[^-]+$/);
   return match?.[1] ?? "";
 }
 
