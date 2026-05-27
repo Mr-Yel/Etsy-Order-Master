@@ -54,26 +54,6 @@ export const EXPORT_COLUMNS = [
 
 export type ExportTableRow = Record<(typeof EXPORT_COLUMNS)[number], string>;
 
-/** 销售日期：Unix 时间戳（秒）按 UTC → MM/DD/YY，避免本地时区导致日期偏移 */
-function formatSaleDate(ts: number | undefined): string {
-  if (ts == null) return "";
-  const d = new Date(ts * 1000);
-  const y = d.getUTCFullYear().toString().slice(-2);
-  const m = (d.getUTCMonth() + 1).toString().padStart(2, "0");
-  const day = d.getUTCDate().toString().padStart(2, "0");
-  return `${m}/${day}/${y}`;
-}
-
-/** Unix 时间戳（秒）按 UTC → MM/DD/YYYY */
-function formatDateUTC(ts: number | undefined | null): string {
-  if (ts == null) return "";
-  const d = new Date(ts * 1000);
-  const y = d.getUTCFullYear().toString();
-  const m = (d.getUTCMonth() + 1).toString().padStart(2, "0");
-  const day = d.getUTCDate().toString().padStart(2, "0");
-  return `${m}/${day}/${y}`;
-}
-
 function safeStr(v: unknown): string {
   if (v == null) return "";
   return String(v);
@@ -161,8 +141,8 @@ export function mapOrdersToTableRows(
       const fallbackTransactionId = fallbackTransactionIds[index];
 
       return {
-        "Sale Date": formatSaleDate(order.order_date),
-        "Date Paid": formatDateUTC(order.payment?.payment_date),
+        "Sale Date": safeStr(order.order_date),
+        "Date Paid": safeStr(order.payment?.payment_date),
         "Order ID": getExportOrderId({
           shopId,
           orderId: order.order_id,
@@ -174,8 +154,8 @@ export function mapOrdersToTableRows(
         "Last Name": lastName,
         "Number of Items": safeStr(transaction.quantity ?? ""),
         "Payment Method": "Credit Card",
-        "Ship Date": formatDateUTC(order.fulfillment?.actual_ship_date),
-        "Latest Ship Date": formatDateUTC(order.fulfillment?.expected_ship_date),
+        "Ship Date": safeStr(order.fulfillment?.actual_ship_date),
+        "Latest Ship Date": safeStr(order.fulfillment?.expected_ship_date),
         "Street 1": safeStr(addr?.first_line),
         "Street 2": safeStr(addr?.second_line),
         "Ship City": safeStr(addr?.city),
