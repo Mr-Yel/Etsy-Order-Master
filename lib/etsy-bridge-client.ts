@@ -8,6 +8,11 @@ import {
   type EtsyImagesFetchPayload,
 } from "./etsy-bridge-types";
 import { sendEtsyMainworldBridgeRequest } from "./etsy-mainworld-client";
+import { browser } from "wxt/browser";
+import {
+  ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
+  type EtsyImageFetchProxyResponse,
+} from "./etsy-image-fetch-proxy-types";
 
 export async function getEtsyBridgeContext(options?: {
   timeoutMs?: number;
@@ -43,7 +48,25 @@ export async function setEtsyInputValue(
 export async function fetchEtsyImagesAsBase64(
   payload: EtsyImagesFetchPayload
 ): Promise<EtsyImagesFetchData> {
-  return sendEtsyMainworldBridgeRequest<EtsyImagesFetchPayload, EtsyImagesFetchData>({
+  const response = (await browser.runtime.sendMessage({
+    type: ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
+    urls: payload.urls,
+  })) as EtsyImageFetchProxyResponse | undefined;
+
+  if (response?.success) {
+    return response.data;
+  }
+
+  throw new Error(response?.error ?? "拉取图片失败");
+}
+
+export async function fetchEtsyImagesAsBase64FromMainWorld(
+  payload: EtsyImagesFetchPayload
+): Promise<EtsyImagesFetchData> {
+  return sendEtsyMainworldBridgeRequest<
+    EtsyImagesFetchPayload,
+    EtsyImagesFetchData
+  >({
     action: ETSY_BRIDGE_ACTIONS.imagesFetchAsBase64,
     payload,
     timeoutMs: 60000,

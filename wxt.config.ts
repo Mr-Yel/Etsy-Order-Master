@@ -87,6 +87,7 @@ export default defineConfig({
     permissions: ['storage', 'tabs'],
     host_permissions: [
       '*://*.etsy.com/*',
+      'https://i.etsystatic.com/*',
       'https://kstgl.kesiteng.cn/*',
       // 'https://huangxiangkun.uno/*',
     ],

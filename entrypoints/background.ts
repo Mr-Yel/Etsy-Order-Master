@@ -13,6 +13,79 @@ import {
 } from "@/lib/kst-proxy-types";
 import { runKstProxyInBackground } from "@/lib/kst-proxy";
 import { openLoginPage, handle401 } from "@/lib/auth-manager";
+import {
+  ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
+  type EtsyImageFetchProxyRequest,
+} from "@/lib/etsy-image-fetch-proxy-types";
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function fetchImageAsBase64(url: string, index: number): Promise<string> {
+  console.log("[ETSY-IMAGE-PROXY] Fetch image start", {
+    index,
+    urlPreview: url.slice(0, 160),
+  });
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+    });
+
+    console.log("[ETSY-IMAGE-PROXY] Fetch image response", {
+      index,
+      status: response.status,
+      ok: response.ok,
+      contentType: response.headers.get("content-type"),
+      contentLength: response.headers.get("content-length"),
+    });
+
+    if (!response.ok) {
+      throw new Error(`fetch ${response.status} ${response.statusText}`);
+    }
+
+    return arrayBufferToBase64(await response.arrayBuffer());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[ETSY-IMAGE-PROXY] Fetch image failed", {
+      index,
+      urlPreview: url.slice(0, 160),
+      error: message,
+    });
+    throw new Error(`第 ${index + 1} 张图片下载失败: ${message}`);
+  }
+}
+
+async function fetchEtsyImagesAsBase64InBackground(
+  urls: string[]
+): Promise<{ images: string[] }> {
+  console.log("[ETSY-IMAGE-PROXY] Fetch images request", {
+    count: urls.length,
+    urlPreviews: urls.slice(0, 20).map((url, index) => ({
+      index,
+      urlPreview: url.slice(0, 160),
+    })),
+  });
+
+  const images = await Promise.all(
+    urls.map((url, index) => fetchImageAsBase64(url, index))
+  );
+
+  console.log("[ETSY-IMAGE-PROXY] Fetch images success", {
+    count: images.length,
+  });
+
+  return { images };
+}
 
 export default defineBackground(() => {
   console.log("Hello background!", { id: browser.runtime.id });
@@ -51,6 +124,19 @@ export default defineBackground(() => {
         void enqueueAppLogFromEvent(appLogMessage.payload, sender);
         sendResponse({ success: true as const });
         return false;
+      }
+
+      if ((message as { type?: string })?.type === ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE) {
+        const req = message as EtsyImageFetchProxyRequest;
+        fetchEtsyImagesAsBase64InBackground(req.urls)
+          .then((data) => sendResponse({ success: true as const, data }))
+          .catch((err: Error) =>
+            sendResponse({
+              success: false as const,
+              error: err?.message ?? String(err),
+            })
+          );
+        return true;
       }
 
       if ((message as { type?: string })?.type === KST_PROXY_MESSAGE_TYPE) {
