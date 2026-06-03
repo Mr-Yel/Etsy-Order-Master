@@ -2,7 +2,7 @@
   "name": "Etsy Order Master",
   "description": "Etsy订单管理工具",
   "private": true,
-  "version": "1.0.17",
+  "version": "1.0.18",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -15,6 +15,7 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "dayjs": "^1.11.21",
     "jsencrypt": "^3.5.4",
     "jszip": "^3.10.1",
     "notyf": "^3.10.0",

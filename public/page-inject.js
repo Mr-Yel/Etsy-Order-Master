@@ -87,12 +87,126 @@
   }
 
   /**
-   * 在主世界劫持 window.fetch，拦截 Etsy move-orders 接口
+   * 判断是否为需要拦截的 Etsy 修改 ship-by-date 接口
+   * 例如：
+   * https://www.etsy.com/api/v3/ajax/shop/26833914/mission-control/orders/fulfillment/update-ship-by-date/4068847770
    */
-  function patchFetchForEtsyMoveOrders() {
+  function getEtsyUpdateShipByDateMatch(url, method) {
+    if (!url) return null;
+    try {
+      var u = new URL(url, window.location.origin);
+      if (u.hostname !== "www.etsy.com") return null;
+      var match = u.pathname.match(
+        /^\/api\/v3\/ajax\/shop\/(\d+)\/mission-control\/orders\/fulfillment\/update-ship-by-date\/(\d+)$/
+      );
+      if (!match) return null;
+      var m = (method || "GET").toUpperCase();
+      if (m !== "POST") return null;
+      return {
+        shopId: match[1],
+        orderId: match[2],
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function parseUpdateShipByDateBody(bodyText) {
+    if (typeof bodyText !== "string" || !bodyText.trim()) {
+      return { newShipByDate: null };
+    }
+    try {
+      var parsed = JSON.parse(bodyText);
+      return {
+        newShipByDate:
+          typeof parsed.new_ship_by_date === "number"
+            ? parsed.new_ship_by_date
+            : null,
+      };
+    } catch (e) {
+      return { newShipByDate: null };
+    }
+  }
+
+  function getEtsyInterceptDescriptor(url, method, transport) {
+    if (shouldInterceptEtsyMoveOrders(url, method)) {
+      return {
+        kind: "moveOrders",
+        requestType: "etsy-move-orders-request",
+        responseType: "etsy-move-orders-response",
+        requestedEvent: "moveOrders.requested",
+        respondedEvent: "moveOrders.responded",
+        requestIdPrefix: transport === "xhr" ? "etsy-move-orders-xhr" : "etsy-move-orders",
+        extra: {},
+      };
+    }
+
+    var updateShipByDateMatch = getEtsyUpdateShipByDateMatch(url, method);
+    if (updateShipByDateMatch) {
+      return {
+        kind: "updateShipByDate",
+        requestType: "etsy-update-ship-by-date-request",
+        responseType: "etsy-update-ship-by-date-response",
+        requestedEvent: "updateShipByDate.requested",
+        respondedEvent: "updateShipByDate.responded",
+        requestIdPrefix:
+          transport === "xhr"
+            ? "etsy-update-ship-by-date-xhr"
+            : "etsy-update-ship-by-date",
+        extra: updateShipByDateMatch,
+      };
+    }
+
+    return null;
+  }
+
+  function buildRequestPayload(descriptor, requestId, url, method, bodyText) {
+    var payload = {
+      type: descriptor.requestType,
+      requestId: requestId,
+      url: url,
+      method: method,
+      body: bodyText,
+      source: "page-inject",
+    };
+
+    if (descriptor.kind === "updateShipByDate") {
+      var parsedBody = parseUpdateShipByDateBody(bodyText);
+      payload.shopId = descriptor.extra.shopId;
+      payload.orderId = descriptor.extra.orderId;
+      payload.newShipByDate = parsedBody.newShipByDate;
+    }
+
+    return payload;
+  }
+
+  function buildResponsePayload(descriptor, requestId, url, status, ok, bodyText, requestPayload) {
+    var payload = {
+      type: descriptor.responseType,
+      requestId: requestId,
+      url: url,
+      status: status,
+      ok: ok,
+      body: bodyText,
+      source: "page-inject",
+    };
+
+    if (descriptor.kind === "updateShipByDate") {
+      payload.shopId = descriptor.extra.shopId;
+      payload.orderId = descriptor.extra.orderId;
+      payload.newShipByDate = requestPayload ? requestPayload.newShipByDate : null;
+    }
+
+    return payload;
+  }
+
+  /**
+   * 在主世界劫持 window.fetch，拦截 Etsy 目标接口
+   */
+  function patchFetchForEtsyRequests() {
     if (typeof window.fetch !== "function") return;
-    if (window.__etsyMoveOrdersFetchPatched) return;
-    window.__etsyMoveOrdersFetchPatched = true;
+    if (window.__etsyRequestFetchPatched) return;
+    window.__etsyRequestFetchPatched = true;
 
     var originalFetch = window.fetch;
 
@@ -100,9 +214,10 @@
       var url = typeof input === "string" ? input : (input && input.url);
       var method = (init && init.method) || (input && input.method) || "GET";
 
-      var needIntercept = shouldInterceptEtsyMoveOrders(url, method);
-      var requestId = needIntercept
-        ? "etsy-move-orders-" + Date.now() + "-" + Math.random()
+      var descriptor = getEtsyInterceptDescriptor(url, method, "fetch");
+      var needIntercept = descriptor != null;
+      var requestId = descriptor
+        ? descriptor.requestIdPrefix + "-" + Date.now() + "-" + Math.random()
         : null;
 
       var bodyPromise = Promise.resolve(null);
@@ -123,25 +238,21 @@
       }
 
       return bodyPromise.then(function (requestBodyText) {
+        var requestPayload = null;
         if (needIntercept) {
           try {
+            requestPayload = buildRequestPayload(
+              descriptor,
+              requestId,
+              url,
+              method,
+              requestBodyText
+            );
             window.postMessage(
-              {
-                type: "etsy-move-orders-request",
-                requestId: requestId,
-                url: url,
-                method: method,
-                body: requestBodyText,
-                source: "page-inject"
-              },
+              requestPayload,
               "*"
             );
-            postBridgeEvent("moveOrders.requested", {
-              requestId: requestId,
-              url: url,
-              method: method,
-              body: requestBodyText,
-            });
+            postBridgeEvent(descriptor.requestedEvent, requestPayload);
           } catch (e) {
             // 忽略 postMessage 错误
           }
@@ -156,25 +267,20 @@
               .text()
               .then(function (respText) {
                 try {
+                  var responsePayload = buildResponsePayload(
+                    descriptor,
+                    requestId,
+                    url,
+                    response.status,
+                    response.ok,
+                    respText,
+                    requestPayload
+                  );
                   window.postMessage(
-                    {
-                      type: "etsy-move-orders-response",
-                      requestId: requestId,
-                      url: url,
-                      status: response.status,
-                      ok: response.ok,
-                      body: respText,
-                      source: "page-inject"
-                    },
+                    responsePayload,
                     "*"
                   );
-                  postBridgeEvent("moveOrders.responded", {
-                    requestId: requestId,
-                    url: url,
-                    status: response.status,
-                    ok: response.ok,
-                    body: respText,
-                  });
+                  postBridgeEvent(descriptor.respondedEvent, responsePayload);
                 } catch (e) {
                   // 忽略 postMessage 错误
                 }
@@ -191,12 +297,12 @@
   }
 
   /**
-   * 在主世界劫持 XMLHttpRequest，拦截 Etsy move-orders 接口
+   * 在主世界劫持 XMLHttpRequest，拦截 Etsy 目标接口
    */
-  function patchXHRForEtsyMoveOrders() {
+  function patchXHRForEtsyRequests() {
     if (typeof window.XMLHttpRequest !== "function") return;
-    if (window.__etsyMoveOrdersXHRPatched) return;
-    window.__etsyMoveOrdersXHRPatched = true;
+    if (window.__etsyRequestXHRPatched) return;
+    window.__etsyRequestXHRPatched = true;
 
     var OriginalXHR = window.XMLHttpRequest;
 
@@ -214,55 +320,47 @@
 
       var originalSend = xhr.send;
       xhr.send = function (body) {
-        var needIntercept = shouldInterceptEtsyMoveOrders(_url, _method);
-        var requestId = needIntercept
-          ? "etsy-move-orders-xhr-" + Date.now() + "-" + Math.random()
+        var descriptor = getEtsyInterceptDescriptor(_url, _method, "xhr");
+        var needIntercept = descriptor != null;
+        var requestId = descriptor
+          ? descriptor.requestIdPrefix + "-" + Date.now() + "-" + Math.random()
           : null;
 
+        var requestPayload = null;
         if (needIntercept) {
           try {
+            requestPayload = buildRequestPayload(
+              descriptor,
+              requestId,
+              _url,
+              _method,
+              typeof body === "string" ? body : null
+            );
             window.postMessage(
-              {
-                type: "etsy-move-orders-request",
-                requestId: requestId,
-                url: _url,
-                method: _method,
-                body: typeof body === "string" ? body : null,
-                source: "page-inject"
-              },
+              requestPayload,
               "*"
             );
-            postBridgeEvent("moveOrders.requested", {
-              requestId: requestId,
-              url: _url,
-              method: _method,
-              body: typeof body === "string" ? body : null,
-            });
+            postBridgeEvent(descriptor.requestedEvent, requestPayload);
           } catch (e) {
             // 忽略 postMessage 错误
           }
 
           xhr.addEventListener("loadend", function () {
             try {
+              var responsePayload = buildResponsePayload(
+                descriptor,
+                requestId,
+                _url,
+                xhr.status,
+                xhr.status >= 200 && xhr.status < 300,
+                xhr.responseText,
+                requestPayload
+              );
               window.postMessage(
-                {
-                  type: "etsy-move-orders-response",
-                  requestId: requestId,
-                  url: _url,
-                  status: xhr.status,
-                  ok: xhr.status >= 200 && xhr.status < 300,
-                  body: xhr.responseText,
-                  source: "page-inject"
-                },
+                responsePayload,
                 "*"
               );
-              postBridgeEvent("moveOrders.responded", {
-                requestId: requestId,
-                url: _url,
-                status: xhr.status,
-                ok: xhr.status >= 200 && xhr.status < 300,
-                body: xhr.responseText,
-              });
+              postBridgeEvent(descriptor.respondedEvent, responsePayload);
             } catch (e) {
               // 忽略 postMessage 错误
             }
@@ -482,9 +580,9 @@
 
   });
 
-  // 启用对 Etsy move-orders 接口的劫持
-  patchFetchForEtsyMoveOrders();
-  patchXHRForEtsyMoveOrders();
+  // 启用对 Etsy 目标接口的劫持
+  patchFetchForEtsyRequests();
+  patchXHRForEtsyRequests();
 
   console.log("✅ [主世界] page-inject.js 已加载，可以访问 window.Etsy 对象和 DOM 操作");
 })();

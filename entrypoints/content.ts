@@ -30,6 +30,15 @@ import {
   resolveOrderSyncStatus,
 } from "@/lib/kst-sync-status";
 import { getExportOrderId } from "@/utils/order-id-rules";
+import {
+  fetchPlatformOrderDetailViaProxy,
+  fetchPlatformOrdersListViaProxy,
+  updatePlatformOrderShipByDateViaProxy,
+} from "@/api/kst-platform-orders";
+import {
+  appendShipByDateLog,
+  formatChinaDateTimeFromUnixSeconds,
+} from "@/lib/kst-ship-by-date-sync-utils.mjs";
 
 /** 将订单号数组格式化为简短预览，用于错误提示（最多展示前几条 + 等N条） */
 function formatOrderIdsPreview(
@@ -427,6 +436,15 @@ export default defineContentScript({
         orderIds: (string | number)[];
       }
     >();
+    const pendingUpdateShipByDateByRequestId = new Map<
+      string,
+      {
+        shopId?: string;
+        orderId?: string;
+        newShipByDate?: number | null;
+        requestBody?: string | null;
+      }
+    >();
 
     /**
      * 当捕获到 move-orders 且 Etsy 响应成功时，直接同步到 KST 订单系统
@@ -731,10 +749,16 @@ export default defineContentScript({
               body?: string | null;
               status?: number;
               ok?: boolean;
+              shopId?: string;
+              orderId?: string;
+              newShipByDate?: number | null;
             };
             meta?: {
               source?: string;
             };
+            shopId?: string;
+            orderId?: string;
+            newShipByDate?: number | null;
           }
         | undefined;
 
@@ -743,9 +767,13 @@ export default defineContentScript({
           ? "moveOrders.requested"
           : data?.type === "etsy-move-orders-response"
             ? "moveOrders.responded"
-            : data?.type === ETSY_BRIDGE_EVENT_TYPE
-              ? data.event
-              : undefined;
+            : data?.type === "etsy-update-ship-by-date-request"
+              ? "updateShipByDate.requested"
+              : data?.type === "etsy-update-ship-by-date-response"
+                ? "updateShipByDate.responded"
+                : data?.type === ETSY_BRIDGE_EVENT_TYPE
+                  ? data.event
+                  : undefined;
 
       const normalizedPayload =
         data?.type === ETSY_BRIDGE_EVENT_TYPE ? data.payload : data;
@@ -766,6 +794,23 @@ export default defineContentScript({
               ok: normalizedPayload?.ok,
             }
           : null;
+      const normalizedUpdateShipByDateMessage =
+        normalizedType === "updateShipByDate.requested" ||
+        normalizedType === "updateShipByDate.responded"
+          ? {
+              type: normalizedType,
+              source: normalizedSource,
+              requestId: normalizedPayload?.requestId,
+              url: normalizedPayload?.url,
+              method: normalizedPayload?.method,
+              body: normalizedPayload?.body,
+              status: normalizedPayload?.status,
+              ok: normalizedPayload?.ok,
+              shopId: normalizedPayload?.shopId,
+              orderId: normalizedPayload?.orderId,
+              newShipByDate: normalizedPayload?.newShipByDate,
+            }
+          : null;
 
       if (normalizedMoveOrdersMessage) {
         console.log("[待处理监听] 收到 move-orders 相关消息", {
@@ -773,6 +818,186 @@ export default defineContentScript({
           requestId: normalizedMoveOrdersMessage.requestId,
           source: normalizedMoveOrdersMessage.source,
         });
+      }
+
+      if (normalizedUpdateShipByDateMessage) {
+        console.log("[发货日期监听] 收到 update-ship-by-date 相关消息", {
+          type: normalizedUpdateShipByDateMessage.type,
+          requestId: normalizedUpdateShipByDateMessage.requestId,
+          orderId: normalizedUpdateShipByDateMessage.orderId,
+          newShipByDate: normalizedUpdateShipByDateMessage.newShipByDate,
+          source: normalizedUpdateShipByDateMessage.source,
+        });
+      }
+
+      if (normalizedUpdateShipByDateMessage) {
+        if (
+          normalizedUpdateShipByDateMessage.source !== "page-inject" &&
+          normalizedUpdateShipByDateMessage.source !== "page"
+        ) {
+          return;
+        }
+
+        if (normalizedUpdateShipByDateMessage.type === "updateShipByDate.requested") {
+          const requestId = normalizedUpdateShipByDateMessage.requestId;
+          if (!requestId) {
+            console.warn("[发货日期监听] 请求缺少 requestId，无法等待成功响应");
+            return;
+          }
+          pendingUpdateShipByDateByRequestId.set(requestId, {
+            shopId: normalizedUpdateShipByDateMessage.shopId,
+            orderId: normalizedUpdateShipByDateMessage.orderId,
+            newShipByDate: normalizedUpdateShipByDateMessage.newShipByDate,
+            requestBody: normalizedUpdateShipByDateMessage.body,
+          });
+          console.log("[发货日期监听] 已缓存请求，等待 Etsy 成功响应", {
+            requestId,
+            shopId: normalizedUpdateShipByDateMessage.shopId,
+            orderId: normalizedUpdateShipByDateMessage.orderId,
+            newShipByDate: normalizedUpdateShipByDateMessage.newShipByDate,
+            cacheSize: pendingUpdateShipByDateByRequestId.size,
+          });
+          return;
+        }
+
+        if (normalizedUpdateShipByDateMessage.type === "updateShipByDate.responded") {
+          void (async () => {
+            const requestId = normalizedUpdateShipByDateMessage.requestId;
+            if (!requestId) {
+              console.warn("[发货日期监听] 响应缺少 requestId，无法匹配请求缓存");
+              return;
+            }
+
+            const pending = pendingUpdateShipByDateByRequestId.get(requestId);
+            if (!pending) {
+              console.log("[发货日期监听] 未找到对应请求缓存", {
+                requestId,
+                status: normalizedUpdateShipByDateMessage.status,
+                ok: normalizedUpdateShipByDateMessage.ok,
+              });
+              return;
+            }
+
+            const isSuccess =
+              normalizedUpdateShipByDateMessage.ok === true &&
+              typeof normalizedUpdateShipByDateMessage.status === "number" &&
+              normalizedUpdateShipByDateMessage.status >= 200 &&
+              normalizedUpdateShipByDateMessage.status < 300;
+
+            if (!isSuccess) {
+              console.warn("[发货日期监听] Etsy 修改发货日期失败，暂不回传系统", {
+                requestId,
+                orderId: pending.orderId,
+                newShipByDate: pending.newShipByDate,
+                status: normalizedUpdateShipByDateMessage.status,
+                ok: normalizedUpdateShipByDateMessage.ok,
+              });
+              pendingUpdateShipByDateByRequestId.delete(requestId);
+              return;
+            }
+
+            console.log("[发货日期监听] Etsy 修改发货日期成功，开始同步 KST 最晚发货时间", {
+              requestId,
+              shopId: pending.shopId,
+              orderId: pending.orderId,
+              newShipByDate: pending.newShipByDate,
+            });
+            void emitAppLog({
+              event: "ship_by_date_change_succeeded",
+              orderNo: pending.orderId ?? "__SYSTEM__",
+              source: "auto_update_ship_by_date",
+              occurredAt: new Date().toISOString(),
+              data: {
+                requestId,
+                shopId: pending.shopId,
+                orderId: pending.orderId,
+                newShipByDate: pending.newShipByDate,
+                requestBody: pending.requestBody ?? "",
+                requestUrl: normalizedUpdateShipByDateMessage.url ?? "",
+                requestMethod: normalizedUpdateShipByDateMessage.method ?? "",
+                status: normalizedUpdateShipByDateMessage.status,
+                ok: normalizedUpdateShipByDateMessage.ok,
+                pageUrl: location.href,
+              },
+            });
+            if (!pending.orderId || typeof pending.newShipByDate !== "number") {
+              console.log("[发货日期监听] 缺少订单号或 newShipByDate，跳过 KST 更新", {
+                requestId,
+                orderId: pending.orderId,
+                newShipByDate: pending.newShipByDate,
+              });
+              pendingUpdateShipByDateByRequestId.delete(requestId);
+              return;
+            }
+
+            try {
+              const latestDeliveryTime = formatChinaDateTimeFromUnixSeconds(
+                pending.newShipByDate
+              );
+              const listResponse = await fetchPlatformOrdersListViaProxy({
+                pageNum: 1,
+                pageSize: 1,
+                platformOrderIds: pending.orderId,
+              });
+              const matchedRows = Array.isArray(listResponse.rows)
+                ? listResponse.rows
+                : [];
+
+              if (matchedRows.length !== 1) {
+                console.log("[发货日期监听] KST 列表匹配数量不是 1，静默跳过", {
+                  requestId,
+                  platformOrderIds: pending.orderId,
+                  matchedCount: matchedRows.length,
+                  total: listResponse.total,
+                });
+                pendingUpdateShipByDateByRequestId.delete(requestId);
+                return;
+              }
+
+              const systemOrderId = matchedRows[0]?.id;
+              if (!systemOrderId) {
+                console.log("[发货日期监听] KST 列表返回缺少系统订单 id，静默跳过", {
+                  requestId,
+                  platformOrderIds: pending.orderId,
+                });
+                pendingUpdateShipByDateByRequestId.delete(requestId);
+                return;
+              }
+
+              const detailResponse = await fetchPlatformOrderDetailViaProxy(systemOrderId);
+              const errorInfo = appendShipByDateLog({
+                errorInfo: detailResponse.data?.errorInfo ?? null,
+                platformOrderId: pending.orderId,
+                latestDeliveryTime,
+              });
+
+              await updatePlatformOrderShipByDateViaProxy({
+                id: systemOrderId,
+                latestDeliveryTime,
+                errorInfo,
+              });
+
+              console.log("[发货日期监听] 已同步 KST 最晚发货时间和日志", {
+                requestId,
+                systemOrderId,
+                platformOrderId: pending.orderId,
+                latestDeliveryTime,
+              });
+            } catch (error) {
+              console.warn("[发货日期监听] 同步 KST 最晚发货时间失败，已跳过", {
+                requestId,
+                orderId: pending.orderId,
+                newShipByDate: pending.newShipByDate,
+                error,
+                errorMessage: error instanceof Error ? error.message : String(error),
+              });
+            }
+            pendingUpdateShipByDateByRequestId.delete(requestId);
+          })();
+          return;
+        }
+
+        return;
       }
 
       if (!normalizedMoveOrdersMessage) return;

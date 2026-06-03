@@ -126,6 +126,24 @@ export type PlatformOrdersListResponse = {
   msg: string;
 };
 
+export type PlatformOrderDetailResponse = {
+  code: number;
+  msg: string;
+  data?: PlatformOrder | null;
+};
+
+export type PlatformOrderUpdateParams = {
+  id: string;
+  latestDeliveryTime: string;
+  errorInfo: string;
+};
+
+export type PlatformOrderUpdateResponse = {
+  code: number;
+  msg: string;
+  [key: string]: unknown;
+};
+
 const PLATFORM_ORDERS_BASE = KST_BASE_URL;
 
 /**
@@ -176,6 +194,42 @@ export async function fetchPlatformOrdersListViaProxy(
       pageNum: String(params.pageNum),
       pageSize: String(params.pageSize),
       platformOrderIds: params.platformOrderIds,
+    },
+  });
+  if (data?.code !== 200) {
+    const msg = data?.msg ?? "请求失败";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export function platformOrderDetailPath(id: string): string {
+  return `/system/platform-orders/${encodeURIComponent(id)}`;
+}
+
+export async function fetchPlatformOrderDetailViaProxy(
+  id: string
+): Promise<PlatformOrderDetailResponse> {
+  const data = await kstAuthenticatedRequest<PlatformOrderDetailResponse>({
+    path: platformOrderDetailPath(id),
+    method: "GET",
+  });
+  if (data?.code !== 200) {
+    const msg = data?.msg ?? "请求失败";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export async function updatePlatformOrderShipByDateViaProxy(
+  params: PlatformOrderUpdateParams
+): Promise<PlatformOrderUpdateResponse> {
+  const data = await kstAuthenticatedRequest<PlatformOrderUpdateResponse>({
+    path: platformOrderDetailPath(params.id),
+    method: "PUT",
+    body: {
+      latestDeliveryTime: params.latestDeliveryTime,
+      errorInfo: params.errorInfo,
     },
   });
   if (data?.code !== 200) {

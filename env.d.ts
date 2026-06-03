@@ -9,3 +9,14 @@ interface ImportMetaEnv {
   readonly VITE_EOM_APP_LOG_CLIENT_ID?: string;
   readonly VITE_EOM_APP_LOG_CLIENT_SECRET?: string;
 }
+
+declare module "@/lib/kst-ship-by-date-sync-utils.mjs" {
+  export function formatChinaDateTimeFromUnixSeconds(seconds: number): string;
+  export function appendShipByDateLog(options: {
+    errorInfo?: string | null;
+    platformOrderId: string;
+    latestDeliveryTime: string;
+    now?: number;
+    randomIdPart?: string;
+  }): string;
+}
