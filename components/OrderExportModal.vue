@@ -6,9 +6,16 @@ import {
   getDefaultOrderStateId,
 } from "@/composables/useOrderStates";
 import {
-  fetchOrderList,
   getOrderListBaseParams,
 } from "@/composables/useFetchOrderList";
+import { fetchEtsyOrdersPage } from "@/api/etsy-orders";
+import {
+  buildOrderListQueryParams,
+  getOrderPageOffset,
+  normalizeOrderPage,
+  normalizeOrderPageSize,
+  ORDER_PAGE_SIZE_OPTIONS,
+} from "@/lib/order-list-query-utils.mjs";
 import {
   EXPORT_COLUMNS,
   mapOrdersToTableRows,
@@ -29,14 +36,29 @@ const rows = ref<ExportTableRow[]>([]);
 const selected = ref<Set<number>>(new Set());
 const orderStateOptions = ref<{ label: string; value: number }[]>([]);
 const selectedOrderStateId = ref<number | "">("");
-const pageSize = ref(999);
+const pageSize = ref(20);
+const currentPage = ref(1);
+const searchTerms = ref("");
+const totalOrders = ref<number | null>(null);
 const isSyncingToKst = ref(false);
 
 const columns = EXPORT_COLUMNS;
+const pageSizeOptions = ORDER_PAGE_SIZE_OPTIONS;
 
 const selectedRows = computed(() =>
   rows.value.filter((_, i) => selected.value.has(i))
 );
+
+const totalPages = computed(() => {
+  if (totalOrders.value == null) return null;
+  return Math.max(1, Math.ceil(totalOrders.value / pageSize.value));
+});
+
+const canGoPrev = computed(() => currentPage.value > 1);
+const canGoNext = computed(() => {
+  if (totalPages.value != null) return currentPage.value < totalPages.value;
+  return rows.value.length >= pageSize.value;
+});
 
 const groupedRowMeta = computed(() => {
   let currentGroup = -1;
@@ -77,7 +99,22 @@ function toggleRow(index: number) {
   selected.value = next;
 }
 
-async function fetchOrders() {
+function clearSelectedOrders() {
+  selected.value = new Set();
+}
+
+async function fetchOrders(options?: {
+  resetPage?: boolean;
+  clearSelection?: boolean;
+}) {
+  if (options?.clearSelection) {
+    clearSelectedOrders();
+  }
+  pageSize.value = normalizeOrderPageSize(pageSize.value);
+  currentPage.value = normalizeOrderPage(
+    options?.resetPage ? 1 : currentPage.value
+  );
+
   loading.value = true;
   error.value = null;
   try {
@@ -95,22 +132,26 @@ async function fetchOrders() {
       }
     }
 
-    const stateIdRaw =
-      selectedOrderStateId.value !== ""
-        ? selectedOrderStateId.value
-        : orderStateOptions.value[0]?.value;
-    if (stateIdRaw == null) {
-      error.value = "无法获取订单状态";
-      return;
-    }
-    const stateId = String(stateIdRaw);
+    const stateId =
+      selectedOrderStateId.value !== "" ? String(selectedOrderStateId.value) : "";
+    const searchText = searchTerms.value.trim();
+    const baseParams = buildOrderListQueryParams(
+      getOrderListBaseParams(stateId),
+      {
+        page: currentPage.value,
+        pageSize: pageSize.value,
+        searchTerms: searchText,
+        omitOrderState: stateId === "",
+        omitOrderStateOnSearch: true,
+      }
+    );
 
-    const baseParams = getOrderListBaseParams(stateId);
-
-    const { orders: orderList, buyers } = await fetchOrderList(
+    const { orders: orderList, buyers, totalSearchHitCount, totalCount } =
+      await fetchEtsyOrdersPage(
       etsy.shopId,
-      pageSize.value,
       baseParams,
+      pageSize.value,
+      getOrderPageOffset(currentPage.value, pageSize.value),
       { credentials: "include" }
     );
 
@@ -147,12 +188,56 @@ async function fetchOrders() {
       buyers as Parameters<typeof mapOrdersToTableRows>[1],
       { shopId: etsy.shopId }
     );
-    selected.value = new Set(rows.value.map((_, i) => i));
+    totalOrders.value = totalSearchHitCount ?? totalCount ?? orderList.length;
+
+    if (totalPages.value != null && currentPage.value > totalPages.value) {
+      currentPage.value = totalPages.value;
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : "获取订单失败";
   } finally {
     loading.value = false;
   }
+}
+
+function changeOrderState() {
+  void fetchOrders({ resetPage: true, clearSelection: true });
+}
+
+function clearOrderState() {
+  selectedOrderStateId.value = "";
+  void fetchOrders({ resetPage: true, clearSelection: true });
+}
+
+function changePageSize() {
+  void fetchOrders({ resetPage: true, clearSelection: true });
+}
+
+function applySearch() {
+  if (searchTerms.value.trim()) {
+    selectedOrderStateId.value = "";
+  }
+  void fetchOrders({ resetPage: true, clearSelection: true });
+}
+
+function goToPage(page: unknown) {
+  const nextPage = normalizeOrderPage(page);
+  if (totalPages.value != null && nextPage > totalPages.value) {
+    currentPage.value = totalPages.value;
+  } else {
+    currentPage.value = nextPage;
+  }
+  void fetchOrders({ clearSelection: true });
+}
+
+function goPrevPage() {
+  if (!canGoPrev.value) return;
+  goToPage(currentPage.value - 1);
+}
+
+function goNextPage() {
+  if (!canGoNext.value) return;
+  goToPage(currentPage.value + 1);
 }
 
 function exportSelected() {
@@ -229,14 +314,15 @@ onMounted(() => {
       <div class="modal-header">
         <div class="modal-header-left">
           <h2 class="modal-title">订单管理</h2>
-          <label v-if="orderStateOptions.length > 0" class="state-select-wrap">
+          <div v-if="orderStateOptions.length > 0" class="state-select-wrap">
             <span class="state-select-label">订单状态</span>
             <select
               v-model.number="selectedOrderStateId"
               class="state-select"
               :disabled="loading"
-              @change="fetchOrders"
+              @change="changeOrderState"
             >
+              <option :value="''">全部状态</option>
               <option
                 v-for="opt in orderStateOptions"
                 :key="opt.value"
@@ -245,19 +331,76 @@ onMounted(() => {
                 {{ opt.label }}
               </option>
             </select>
-          </label>
+            <button
+              type="button"
+              class="btn-clear-state"
+              :disabled="loading || selectedOrderStateId === ''"
+              @click="clearOrderState"
+            >
+              清空
+            </button>
+          </div>
           <label class="page-size-wrap">
-            <span class="page-size-label">数量</span>
-            <input
+            <span class="page-size-label">每页</span>
+            <select
               v-model.number="pageSize"
-              type="number"
-              min="1"
-              max="999"
-              class="page-size-input"
+              class="page-size-select"
               :disabled="loading"
-              @change="fetchOrders"
-            />
+              @change="changePageSize"
+            >
+              <option v-for="size in pageSizeOptions" :key="size" :value="size">
+                {{ size }}
+              </option>
+            </select>
           </label>
+          <form class="search-wrap" @submit.prevent="applySearch">
+            <label class="search-label" for="order-search-input">订单号</label>
+            <input
+              id="order-search-input"
+              v-model="searchTerms"
+              type="search"
+              inputmode="numeric"
+              class="search-input"
+              placeholder="输入订单号"
+              :disabled="loading"
+              @change="applySearch"
+            />
+            <button type="submit" class="btn-search" :disabled="loading">
+              搜索
+            </button>
+          </form>
+          <div class="pagination-wrap">
+            <button
+              type="button"
+              class="btn-page"
+              :disabled="loading || !canGoPrev"
+              @click="goPrevPage"
+            >
+              上一页
+            </button>
+            <label class="page-number-wrap">
+              <span class="page-number-label">第</span>
+              <input
+                v-model.number="currentPage"
+                type="number"
+                min="1"
+                class="page-number-input"
+                :disabled="loading"
+                @change="goToPage(currentPage)"
+              />
+              <span class="page-number-label">
+                页{{ totalPages ? ` / ${totalPages}` : "" }}
+              </span>
+            </label>
+            <button
+              type="button"
+              class="btn-page"
+              :disabled="loading || !canGoNext"
+              @click="goNextPage"
+            >
+              下一页
+            </button>
+          </div>
         </div>
         <button type="button" class="btn-close" aria-label="关闭" @click="close">
           ×
@@ -268,9 +411,12 @@ onMounted(() => {
         <div v-if="loading" class="loading">加载中…</div>
         <div v-else-if="error" class="error">
           <p>{{ error }}</p>
-          <button type="button" class="btn-retry" @click="fetchOrders">
+          <button type="button" class="btn-retry" @click="fetchOrders()">
             重试
           </button>
+        </div>
+        <div v-else-if="rows.length === 0" class="empty">
+          未找到订单
         </div>
         <div v-else class="table-wrap">
           <table class="table">
@@ -314,7 +460,10 @@ onMounted(() => {
       </div>
 
       <div class="modal-footer">
-        <span>已选 {{ selectedRows.length }} 条明细</span>
+        <span>
+          当前页 {{ rows.length }} 条，已选 {{ selectedRows.length }} 条明细
+          <template v-if="totalOrders != null">，共 {{ totalOrders }} 条</template>
+        </span>
        <div>
         <button
           type="button"
@@ -400,6 +549,26 @@ onMounted(() => {
   cursor: not-allowed;
 }
 
+.btn-clear-state {
+  padding: 7px 10px;
+  font-size: 14px;
+  color: #374151;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-clear-state:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.btn-clear-state:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .page-size-wrap {
   display: inline-flex;
   align-items: center;
@@ -411,16 +580,77 @@ onMounted(() => {
   color: #6b7280;
 }
 
-.page-size-input {
-  width: 80px;
+.page-size-select {
+  width: 76px;
+  padding: 6px 8px;
+  font-size: 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.page-size-select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.search-wrap,
+.pagination-wrap,
+.page-number-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-label,
+.page-number-label {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.search-input {
+  width: 160px;
   padding: 6px 8px;
   font-size: 14px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
 }
 
-.page-size-input:disabled {
+.page-number-input {
+  width: 64px;
+  padding: 6px 8px;
+  font-size: 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.search-input:disabled,
+.page-number-input:disabled {
   opacity: 0.7;
+  cursor: not-allowed;
+  background: #f3f4f6;
+}
+
+.btn-search,
+.btn-page {
+  padding: 7px 10px;
+  font-size: 14px;
+  color: #374151;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-search:hover:not(:disabled),
+.btn-page:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.btn-search:disabled,
+.btn-page:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
@@ -455,7 +685,8 @@ onMounted(() => {
 }
 
 .loading,
-.error {
+.error,
+.empty {
   text-align: center;
   padding: 40px 20px;
   color: #6b7280;

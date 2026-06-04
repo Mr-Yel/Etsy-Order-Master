@@ -20,3 +20,23 @@ declare module "@/lib/kst-ship-by-date-sync-utils.mjs" {
     randomIdPart?: string;
   }): string;
 }
+
+declare module "@/lib/order-list-query-utils.mjs" {
+  export const ORDER_PAGE_SIZE_OPTIONS: readonly [10, 20, 50, 100];
+  export function normalizeOrderPageSize(
+    value: unknown,
+    fallback?: number
+  ): number;
+  export function normalizeOrderPage(value: unknown): number;
+  export function getOrderPageOffset(page: unknown, pageSize: unknown): number;
+  export function buildOrderListQueryParams(
+    baseParams: Record<string, string>,
+    query: {
+      page: unknown;
+      pageSize: unknown;
+      searchTerms?: unknown;
+      omitOrderState?: boolean;
+      omitOrderStateOnSearch?: boolean;
+    }
+  ): Record<string, string>;
+}

@@ -15,6 +15,8 @@ export type EtsyFetchOrderListOptions = {
 export type EtsyFetchOrderListResult = {
   orders: EtsyOrder[];
   buyers: EtsyBuyer[];
+  totalCount?: number;
+  totalSearchHitCount?: number;
 };
 
 /**
@@ -120,9 +122,12 @@ export async function fetchEtsyOrdersPage(
     throw new Error(`请求失败: ${res.status} ${res.statusText}`);
   }
   const data = (await res.json()) as EtsyOrdersSearchResponse;
+  const collection = data?.orders_search;
   return {
-    orders: data?.orders_search?.orders ?? [],
-    buyers: data?.orders_search?.buyers ?? [],
+    orders: collection?.orders ?? [],
+    buyers: collection?.buyers ?? [],
+    totalCount: collection?.total_count,
+    totalSearchHitCount: collection?.total_search_hit_count,
   };
 }
 
