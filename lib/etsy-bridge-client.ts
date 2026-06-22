@@ -51,6 +51,8 @@ export async function fetchEtsyImagesAsBase64(
   const response = (await browser.runtime.sendMessage({
     type: ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
     urls: payload.urls,
+    timeoutMs: payload.timeoutMs,
+    concurrency: payload.concurrency,
   })) as EtsyImageFetchProxyResponse | undefined;
 
   if (response?.success) {

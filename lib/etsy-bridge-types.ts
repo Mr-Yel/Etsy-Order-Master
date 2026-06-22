@@ -99,8 +99,32 @@ export type EtsyDomInputSetPayload = {
 
 export type EtsyImagesFetchPayload = {
   urls: string[];
+  timeoutMs?: number;
+  concurrency?: number;
 };
+
+export type EtsyImageFetchFailure = {
+  index: number;
+  url: string;
+  error: string;
+};
+
+export type EtsyImageFetchResult =
+  | {
+      success: true;
+      index: number;
+      url: string;
+      base64: string;
+    }
+  | {
+      success: false;
+      index: number;
+      url: string;
+      error: string;
+    };
 
 export type EtsyImagesFetchData = {
   images: string[];
+  results?: EtsyImageFetchResult[];
+  failures?: EtsyImageFetchFailure[];
 };

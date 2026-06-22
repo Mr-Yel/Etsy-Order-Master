@@ -14,6 +14,7 @@ import {
   type EtsyOrderPersonalizationFile,
 } from "@/api/etsy-orders";
 import { fetchEtsyImagesAsBase64 } from "@/lib/etsy-bridge-client";
+import { runLimitedJobs } from "@/lib/limited-jobs.mjs";
 import type { EtsyOrder, EtsyOrderTransaction } from "@/types/etsy-order";
 import { getUploadedPhotoCount, isPhotoVariation } from "@/types/etsy-order";
 
@@ -39,15 +40,31 @@ type OrderImageExportRow = {
   attachmentError: string;
   noteText: string;
 };
+type ImageJob = {
+  url: string;
+  folderName: string;
+  filename: string;
+};
+type ImageDownloadFailure = ImageJob & {
+  error: string;
+};
+
+const IMAGE_FETCH_TIMEOUT_MS = 30000;
+const IMAGE_FETCH_CONCURRENCY = 4;
+const LARGE_EXPORT_IMAGE_COUNT = 200;
 
 const loading = ref(true);
 const downloading = ref(false);
 const error = ref<string | null>(null);
+const exportNotice = ref<string | null>(null);
+const downloadStage = ref("");
+const downloadCompleted = ref(0);
+const downloadTotal = ref(0);
 const rows = ref<OrderImageExportRow[]>([]);
 const selected = ref<Set<string>>(new Set());
 const orderStateOptions = ref<{ label: string; value: number }[]>([]);
 const selectedOrderStateId = ref<number | "">("");
-const pageSize = ref(999);
+const pageSize = ref(100);
 const previewImage = ref<{
   url: string;
   alt: string;
@@ -89,6 +106,14 @@ const isAllSelected = computed(() => {
 const selectedSkuCount = computed(
   () => new Set(selectedRows.value.map((row) => normalizeSku(row.sku))).size
 );
+
+const downloadButtonText = computed(() => {
+  if (!downloading.value) return "下载总 ZIP";
+  if (downloadStage.value === "下载图片" && downloadTotal.value > 0) {
+    return `下载图片 ${downloadCompleted.value}/${downloadTotal.value}`;
+  }
+  return downloadStage.value || "打包中...";
+});
 
 function close() {
   emit("close");
@@ -390,11 +415,18 @@ function onNoteInput(row: OrderImageExportRow, event: Event) {
   row.noteText = el?.innerText ?? "";
 }
 
-function base64ToBlob(base64: string, type = "application/zip"): Blob {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type });
+function buildFailedImageReport(failures: ImageDownloadFailure[]): string {
+  return failures
+    .map((failure, index) =>
+      [
+        `#${index + 1}`,
+        `目录：${failure.folderName}`,
+        `文件：${failure.filename}`,
+        `原因：${failure.error}`,
+        `URL：${failure.url}`,
+      ].join("\n")
+    )
+    .join("\n\n");
 }
 
 async function downloadSelected() {
@@ -403,14 +435,14 @@ async function downloadSelected() {
 
   downloading.value = true;
   error.value = null;
+  exportNotice.value = null;
+  downloadStage.value = "准备文件...";
+  downloadCompleted.value = 0;
+  downloadTotal.value = 0;
 
   try {
     const zip = new JSZip();
-    const imageJobs: Array<{
-      url: string;
-      folderName: string;
-      filename: string;
-    }> = [];
+    const imageJobs: ImageJob[] = [];
     const productImageSkuSet = new Set<string>();
 
     for (const row of data) {
@@ -446,29 +478,85 @@ async function downloadSelected() {
       }
     }
 
-    if (imageJobs.length > 0) {
-      const { images } = await fetchEtsyImagesAsBase64({
-        urls: imageJobs.map((job) => job.url),
-      });
+    downloadTotal.value = imageJobs.length;
+    if (
+      imageJobs.length >= LARGE_EXPORT_IMAGE_COUNT &&
+      !window.confirm(
+        `本次将下载 ${imageJobs.length} 张图片，可能耗时较久。建议订单很多时分批导出。是否继续？`
+      )
+    ) {
+      return;
+    }
 
-      images.forEach((base64, index) => {
+    const failedDownloads: ImageDownloadFailure[] = [];
+    if (imageJobs.length > 0) {
+      downloadStage.value = "下载图片";
+      const imageResults = await runLimitedJobs(
+        imageJobs,
+        async (job) => {
+          const { images, results, failures = [] } = await fetchEtsyImagesAsBase64({
+            urls: [job.url],
+            timeoutMs: IMAGE_FETCH_TIMEOUT_MS,
+            concurrency: 1,
+          });
+          const result = results?.[0];
+          if (result?.success) return result.base64;
+          if (result && !result.success) throw new Error(result.error);
+          if (failures[0]) throw new Error(failures[0].error);
+          const base64 = images[0];
+          if (!base64) throw new Error("图片内容为空");
+          return base64;
+        },
+        {
+          concurrency: IMAGE_FETCH_CONCURRENCY,
+          onProgress({ completed, total }) {
+            downloadCompleted.value = completed;
+            downloadTotal.value = total;
+          },
+        }
+      );
+
+      imageResults.forEach((result, index) => {
         const job = imageJobs[index];
-        if (!job || !base64) return;
-        zip.folder(job.folderName)?.file(job.filename, base64, { base64: true });
+        if (!job) return;
+        if (result.success) {
+          zip.folder(job.folderName)?.file(job.filename, result.value, {
+            base64: true,
+          });
+        } else {
+          failedDownloads.push({
+            ...job,
+            error: result.error,
+          });
+        }
       });
     }
 
-    const zipBase64 = await zip.generateAsync({ type: "base64" });
-    const blob = base64ToBlob(zipBase64);
+    if (failedDownloads.length > 0) {
+      zip.file("下载失败.txt", buildFailedImageReport(failedDownloads), {
+        binary: false,
+      });
+    }
+
+    downloadStage.value = "生成 ZIP...";
+    const blob = await zip.generateAsync({ type: "blob" });
+    downloadStage.value = "保存文件...";
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `order-images-${new Date().toISOString().slice(0, 10)}.zip`;
     a.click();
     URL.revokeObjectURL(a.href);
+    exportNotice.value =
+      failedDownloads.length > 0
+        ? `已导出，${failedDownloads.length} 张图片失败，详情见 ZIP 内 下载失败.txt`
+        : "导出完成";
   } catch (err) {
     error.value = err instanceof Error ? err.message : "订单图片导出失败";
   } finally {
     downloading.value = false;
+    downloadStage.value = "";
+    downloadCompleted.value = 0;
+    downloadTotal.value = 0;
   }
 }
 
@@ -683,14 +771,19 @@ onMounted(() => {
       </div>
 
       <div class="modal-footer">
-        <span>已选 {{ selectedRows.length }} 项 / {{ selectedSkuCount }} 个 SKU</span>
+        <div class="footer-info">
+          <span>已选 {{ selectedRows.length }} 项 / {{ selectedSkuCount }} 个 SKU</span>
+          <span v-if="exportNotice" class="export-notice">
+            {{ exportNotice }}
+          </span>
+        </div>
         <button
           type="button"
           class="btn-export"
           :disabled="loading || downloading || selectedRows.length === 0"
           @click="downloadSelected"
         >
-          {{ downloading ? "打包中..." : "下载总 ZIP" }}
+          {{ downloadButtonText }}
         </button>
       </div>
     </div>
@@ -1069,5 +1162,18 @@ onMounted(() => {
   border-top: 1px solid #e5e7eb;
   color: #4b5563;
   font-size: 14px;
+}
+
+.footer-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.export-notice {
+  color: #0f766e;
+  font-size: 13px;
 }
 </style>

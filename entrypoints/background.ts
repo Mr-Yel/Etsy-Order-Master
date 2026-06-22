@@ -16,7 +16,12 @@ import { openLoginPage, handle401 } from "@/lib/auth-manager";
 import {
   ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
   type EtsyImageFetchProxyRequest,
+  type EtsyImageFetchProxyResult,
 } from "@/lib/etsy-image-fetch-proxy-types";
+import { runLimitedJobs } from "@/lib/limited-jobs.mjs";
+
+const DEFAULT_IMAGE_FETCH_TIMEOUT_MS = 30000;
+const DEFAULT_IMAGE_FETCH_CONCURRENCY = 4;
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -29,16 +34,27 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-async function fetchImageAsBase64(url: string, index: number): Promise<string> {
+async function fetchImageAsBase64(
+  url: string,
+  index: number,
+  timeoutMs = DEFAULT_IMAGE_FETCH_TIMEOUT_MS
+): Promise<string> {
   console.log("[ETSY-IMAGE-PROXY] Fetch image start", {
     index,
     urlPreview: url.slice(0, 160),
+    timeoutMs,
   });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
 
   try {
     const response = await fetch(url, {
       method: "GET",
       credentials: "include",
+      signal: controller.signal,
     });
 
     console.log("[ETSY-IMAGE-PROXY] Fetch image response", {
@@ -55,36 +71,93 @@ async function fetchImageAsBase64(url: string, index: number): Promise<string> {
 
     return arrayBufferToBase64(await response.arrayBuffer());
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof DOMException && error.name === "AbortError"
+        ? `请求超时（${Math.round(timeoutMs / 1000)} 秒）`
+        : error instanceof Error
+          ? error.message
+          : String(error);
     console.error("[ETSY-IMAGE-PROXY] Fetch image failed", {
       index,
       urlPreview: url.slice(0, 160),
       error: message,
     });
     throw new Error(`第 ${index + 1} 张图片下载失败: ${message}`);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
 async function fetchEtsyImagesAsBase64InBackground(
-  urls: string[]
-): Promise<{ images: string[] }> {
+  urls: string[],
+  options?: {
+    timeoutMs?: number;
+    concurrency?: number;
+  }
+): Promise<{
+  images: string[];
+  results: EtsyImageFetchProxyResult[];
+  failures: Array<{ index: number; url: string; error: string }>;
+}> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_IMAGE_FETCH_TIMEOUT_MS;
+  const concurrency = options?.concurrency ?? DEFAULT_IMAGE_FETCH_CONCURRENCY;
   console.log("[ETSY-IMAGE-PROXY] Fetch images request", {
     count: urls.length,
+    timeoutMs,
+    concurrency,
     urlPreviews: urls.slice(0, 20).map((url, index) => ({
       index,
       urlPreview: url.slice(0, 160),
     })),
   });
 
-  const images = await Promise.all(
-    urls.map((url, index) => fetchImageAsBase64(url, index))
+  const jobResults = await runLimitedJobs(
+    urls,
+    (url, index) => fetchImageAsBase64(url, index, timeoutMs),
+    {
+      concurrency,
+      onProgress({ completed, total, index, result }) {
+        console.log("[ETSY-IMAGE-PROXY] Fetch images progress", {
+          completed,
+          total,
+          index,
+          success: result.success,
+        });
+      },
+    }
   );
+
+  const results: EtsyImageFetchProxyResult[] = jobResults.map((result, index) => {
+    const url = urls[index];
+    return result.success
+      ? {
+          success: true,
+          index,
+          url,
+          base64: result.value,
+        }
+      : {
+          success: false,
+          index,
+          url,
+          error: result.error,
+        };
+  });
+  const images = results.map((result) => (result.success ? result.base64 : ""));
+  const failures = results
+    .filter((result): result is Extract<EtsyImageFetchProxyResult, { success: false }> => !result.success)
+    .map((result) => ({
+      index: result.index,
+      url: result.url,
+      error: result.error,
+    }));
 
   console.log("[ETSY-IMAGE-PROXY] Fetch images success", {
     count: images.length,
+    failedCount: failures.length,
   });
 
-  return { images };
+  return { images, results, failures };
 }
 
 export default defineBackground(() => {
@@ -128,7 +201,10 @@ export default defineBackground(() => {
 
       if ((message as { type?: string })?.type === ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE) {
         const req = message as EtsyImageFetchProxyRequest;
-        fetchEtsyImagesAsBase64InBackground(req.urls)
+        fetchEtsyImagesAsBase64InBackground(req.urls, {
+          timeoutMs: req.timeoutMs,
+          concurrency: req.concurrency,
+        })
           .then((data) => sendResponse({ success: true as const, data }))
           .catch((err: Error) =>
             sendResponse({

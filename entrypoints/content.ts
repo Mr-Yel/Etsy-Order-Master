@@ -273,7 +273,11 @@ async function buildImagesZipData(
     throw new Error("没有选中图片");
   }
 
-  const { images: imagesBase64 } = await fetchEtsyImagesAsBase64({ urls });
+  const { images: imagesBase64, failures = [] } = await fetchEtsyImagesAsBase64({
+    urls,
+    timeoutMs: 30000,
+    concurrency: 4,
+  });
 
   function getExt(url: string): string {
     try {
@@ -287,8 +291,21 @@ async function buildImagesZipData(
 
   const zip = new JSZip();
   for (let i = 0; i < imagesBase64.length; i++) {
+    if (!imagesBase64[i]) continue;
     const ext = getExt(urls[i]);
     zip.file(`image_${i + 1}.${ext}`, imagesBase64[i], { base64: true });
+  }
+  if (failures.length > 0) {
+    zip.file(
+      "下载失败.txt",
+      failures
+        .map(
+          (failure, index) =>
+            `#${index + 1}\n文件：image_${failure.index + 1}\n原因：${failure.error}\nURL：${failure.url}`
+        )
+        .join("\n\n"),
+      { binary: false }
+    );
   }
 
   return {
