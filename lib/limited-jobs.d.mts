@@ -22,8 +22,18 @@ export type LimitedJobOptions<T> = {
   onProgress?: (progress: LimitedJobProgress<T>) => void;
 };
 
+export type RetryOptions = {
+  retries?: number;
+  delayMs?: number;
+  shouldRetry?: (error: unknown, attempt: number) => boolean;
+};
+
 export function normalizeConcurrency(value: unknown, fallback?: number): number;
 export function getErrorMessage(error: unknown): string;
+export function runWithRetry<T>(
+  operation: (attempt: number) => Promise<T>,
+  options?: RetryOptions
+): Promise<T>;
 export function runLimitedJobs<TItem, TResult>(
   items: TItem[],
   worker: (item: TItem, index: number) => Promise<TResult>,

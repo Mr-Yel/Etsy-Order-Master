@@ -13,6 +13,7 @@ import {
   ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
   type EtsyImageFetchProxyResponse,
 } from "./etsy-image-fetch-proxy-types";
+import { runWithRetry } from "./limited-jobs.mjs";
 
 export async function getEtsyBridgeContext(options?: {
   timeoutMs?: number;
@@ -48,18 +49,34 @@ export async function setEtsyInputValue(
 export async function fetchEtsyImagesAsBase64(
   payload: EtsyImagesFetchPayload
 ): Promise<EtsyImagesFetchData> {
-  const response = (await browser.runtime.sendMessage({
-    type: ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
-    urls: payload.urls,
-    timeoutMs: payload.timeoutMs,
-    concurrency: payload.concurrency,
-  })) as EtsyImageFetchProxyResponse | undefined;
+  return runWithRetry(
+    async () => {
+      const response = (await browser.runtime.sendMessage({
+        type: ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE,
+        urls: payload.urls,
+        timeoutMs: payload.timeoutMs,
+        concurrency: payload.concurrency,
+      })) as EtsyImageFetchProxyResponse | undefined;
 
-  if (response?.success) {
-    return response.data;
-  }
+      if (response?.success) {
+        return response.data;
+      }
 
-  throw new Error(response?.error ?? "拉取图片失败");
+      throw new Error(response?.error ?? "拉取图片失败");
+    },
+    {
+      retries: 2,
+      delayMs: 200,
+      shouldRetry(error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return (
+          message.includes("message channel closed") ||
+          message.includes("The message port closed") ||
+          message.includes("Could not establish connection")
+        );
+      },
+    }
+  );
 }
 
 export async function fetchEtsyImagesAsBase64FromMainWorld(

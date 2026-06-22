@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runLimitedJobs } from "../lib/limited-jobs.mjs";
+import { runLimitedJobs, runWithRetry } from "../lib/limited-jobs.mjs";
 
 test("runs jobs with the configured concurrency limit", async () => {
   let active = 0;
@@ -50,4 +50,49 @@ test("records failed jobs and continues processing remaining jobs", async () => 
     { success: true, value: "C" },
   ]);
   assert.deepEqual(progress, [1, 2, 3]);
+});
+
+test("retries retryable operations before succeeding", async () => {
+  let attempts = 0;
+
+  const result = await runWithRetry(
+    async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw new Error("message channel closed before a response was received");
+      }
+      return "ok";
+    },
+    {
+      retries: 2,
+      shouldRetry(error) {
+        return String(error).includes("message channel closed");
+      },
+    }
+  );
+
+  assert.equal(result, "ok");
+  assert.equal(attempts, 3);
+});
+
+test("does not retry non-retryable operations", async () => {
+  let attempts = 0;
+
+  await assert.rejects(
+    runWithRetry(
+      async () => {
+        attempts += 1;
+        throw new Error("permanent failure");
+      },
+      {
+        retries: 2,
+        shouldRetry(error) {
+          return String(error).includes("message channel closed");
+        },
+      }
+    ),
+    /permanent failure/
+  );
+
+  assert.equal(attempts, 1);
 });
