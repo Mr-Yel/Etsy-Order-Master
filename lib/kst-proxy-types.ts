@@ -16,6 +16,8 @@ export type KstProxyFormFile = {
 export type KstProxyRequest = {
   path: string;
   method?: "GET" | "POST" | "PUT" | "DELETE";
+  /** 透传给目标接口的自定义请求头 */
+  headers?: Record<string, string>;
   /** GET 时拼到 URL 的 query，会做 encode */
   query?: Record<string, string>;
   /** POST/PUT 时的 JSON body（与 formFile 互斥） */

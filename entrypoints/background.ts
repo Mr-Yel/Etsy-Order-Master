@@ -185,15 +185,6 @@ export default defineBackground(() => {
 
       if ((message as { type?: string })?.type === APP_LOG_MESSAGE_TYPE) {
         const appLogMessage = message as AppLogMessage;
-        console.log("[APP-LOG] Background received log message", {
-          event: appLogMessage.payload.event,
-          orderNo: appLogMessage.payload.orderNo ?? "__SYSTEM__",
-          source: appLogMessage.payload.source ?? "",
-          senderUrl: sender.url ?? "",
-          senderOrigin: sender.origin ?? "",
-          senderTabId: sender.tab?.id ?? null,
-          senderFrameId: sender.frameId ?? null,
-        });
         void enqueueAppLogFromEvent(appLogMessage.payload, sender);
         sendResponse({ success: true as const });
         return false;
@@ -220,6 +211,7 @@ export default defineBackground(() => {
         runKstProxyInBackground({
           path: req.path,
           method: req.method,
+          headers: req.headers,
           query: req.query,
           body: req.body,
           formFile: req.formFile,

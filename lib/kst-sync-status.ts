@@ -73,13 +73,7 @@ export async function findExistingRemoteOrderIds(
           remoteDuplicateIds.add(orderId);
         }
       });
-    } catch (error) {
-      console.error("[KST] Failed to verify remote duplicate orders", {
-        batchOrderIds: batch,
-        totalCandidates: normalizedOrderIds.length,
-        error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
+    } catch {
       throw new OrderSyncStatusResolutionError(
         "校验 KST 已同步订单失败，请重试",
         batch

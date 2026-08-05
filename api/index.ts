@@ -29,3 +29,9 @@ export {
   type PlatformOrderPackage,
   type PlatformOrderShippingInfo,
 } from "./kst-platform-orders";
+export {
+  fetchKstShopListViaProxy,
+  KST_SHOP_LIST_SHOP_PATH,
+  type KstShopListResponse,
+  type KstShopRow,
+} from "./kst-shops";

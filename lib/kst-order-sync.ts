@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import { fetchPlatformOrdersImportJsonViaProxy } from "@/api";
 import { emitAppLog } from "@/lib/app-log";
 import { getToken } from "@/lib/auth-manager";
+import { resolveOwnerUserIdForShop } from "@/lib/kst-shop-owner";
 import {
   findExistingRemoteOrderIds,
   markOrderIdsAsSynced,
@@ -26,6 +27,16 @@ type SyncOrdersToKstParams = {
 
 const DEFAULT_PLATFORM_TYPE = "ETSY";
 const IMPORT_CONFIRMATION_RETRY_DELAYS_MS = [0, 1500, 3000];
+const DUP_SYNC_TRACE_PREFIX = "[DUP-SYNC-TRACE]";
+let syncInvocationCounter = 0;
+
+function traceLog(event: string, details: Record<string, unknown>): void {
+  const body = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, "_")}`)
+    .join(" ");
+  console.log(`${DUP_SYNC_TRACE_PREFIX} ${event}${body ? ` ${body}` : ""}`);
+}
 
 const collectOrderIds = (rows: ExportTableRow[]): string[] => {
   const ids = rows
@@ -55,7 +66,10 @@ function emitSyncLogs(
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-async function confirmImportedOrderIds(orderIds: string[]): Promise<string[]> {
+async function confirmImportedOrderIds(
+  orderIds: string[],
+  traceId: string
+): Promise<string[]> {
   let pendingOrderIds = Array.from(new Set(orderIds));
   const confirmedOrderIds = new Set<string>();
 
@@ -65,6 +79,13 @@ async function confirmImportedOrderIds(orderIds: string[]): Promise<string[]> {
       await wait(delayMs);
     }
 
+    traceLog("kst.confirmImportedOrderIds.list-request", {
+      traceId,
+      delayMs,
+      pendingOrderIdsCount: pendingOrderIds.length,
+      pendingOrderIdsPreview: pendingOrderIds.slice(0, 10).join(","),
+      reason: "post-import-confirmation",
+    });
     const existingOrderIds = await findExistingRemoteOrderIds(pendingOrderIds);
     existingOrderIds.forEach((orderId) => confirmedOrderIds.add(orderId));
     pendingOrderIds = pendingOrderIds.filter(
@@ -103,15 +124,22 @@ export const syncOrdersToKst = async ({
   platformType = DEFAULT_PLATFORM_TYPE,
   logContext,
 }: SyncOrdersToKstParams): Promise<void> => {
+  const traceId = `${logContext?.requestId ?? logContext?.source ?? "sync"}#${++syncInvocationCounter}`;
+  traceLog("kst.syncOrdersToKst.enter", {
+    traceId,
+    shopId,
+    platformType,
+    source: logContext?.source ?? "",
+    requestId: logContext?.requestId ?? "",
+    rowsCount: rows.length,
+  });
   if (!rows.length) {
-    console.log("[KST] No selected orders, skip sync");
     getNotyf().error("请先选择要同步的订单");
     return;
   }
 
   const token = await getToken();
   if (!token) {
-    console.warn("[KST] Missing KST token, cannot sync orders");
     getNotyf().error("请先登录 KST 账号后再同步订单");
     emitSyncLogs(
       collectOrderIds(rows),
@@ -127,23 +155,28 @@ export const syncOrdersToKst = async ({
   }
 
   const allIds = collectOrderIds(rows);
+  traceLog("kst.syncOrdersToKst.order-ids", {
+    traceId,
+    allIdsCount: allIds.length,
+    allIdsPreview: allIds.slice(0, 10).join(","),
+  });
   if (!allIds.length) {
-    console.log("[KST] Selected rows do not contain valid Order ID values");
     getNotyf().error("选中订单中没有有效的 Order ID");
     return;
   }
 
-  console.log("[KST] Preparing order sync", {
-    shopId,
-    platformType,
-    totalSelectedRows: rows.length,
-    uniqueOrderIds: allIds.length,
-  });
+  let ownerUserId: number | undefined;
+  try {
+    ownerUserId = await resolveOwnerUserIdForShop(shopId);
+  } catch {
+  }
+
   emitSyncLogs(
     allIds,
     "kst_sync_requested",
     {
       shopId,
+      ownerUserId,
       platformType,
       totalSelectedRows: rows.length,
       logContext,
@@ -153,15 +186,14 @@ export const syncOrdersToKst = async ({
 
   let syncStatus: ResolvedOrderSyncStatus;
   try {
+    traceLog("kst.syncOrdersToKst.pre-import-list-request", {
+      traceId,
+      reason: "pre-import-duplicate-check",
+      allIdsCount: allIds.length,
+      allIdsPreview: allIds.slice(0, 10).join(","),
+    });
     syncStatus = await resolveOrderSyncStatus(allIds);
   } catch (error) {
-    console.error("[KST] Failed to resolve order sync status before import", {
-      shopId,
-      platformType,
-      orderIdsPreview: allIds.slice(0, 10),
-      error,
-      errorMessage: error instanceof Error ? error.message : String(error),
-    });
     emitSyncLogs(
       allIds,
       "kst_sync_status_resolution_failed",
@@ -182,9 +214,6 @@ export const syncOrdersToKst = async ({
     throw error;
   }
   if (syncStatus.localDuplicateOrderIds.length > 0) {
-    console.log("[KST] Skip orders already stored in local sync cache", {
-      cachedOrderIds: syncStatus.localDuplicateOrderIds,
-    });
     emitSyncLogs(
       syncStatus.localDuplicateOrderIds,
       "kst_sync_skipped_local_duplicate",
@@ -198,9 +227,6 @@ export const syncOrdersToKst = async ({
     );
   }
   if (syncStatus.remoteDuplicateOrderIds.length > 0) {
-    console.log("[KST] Skip orders already found in remote KST records", {
-      remoteDuplicateOrderIds: syncStatus.remoteDuplicateOrderIds,
-    });
     emitSyncLogs(
       syncStatus.remoteDuplicateOrderIds,
       "kst_sync_skipped_remote_duplicate",
@@ -222,7 +248,6 @@ export const syncOrdersToKst = async ({
 
   if (!rowsToSync.length) {
     // Duplicate orders are skipped silently to avoid repeated sync and extra user noise.
-    console.log("[KST] All selected orders were skipped by sync status check");
     emitSyncLogs(
       allIds,
       "kst_sync_skipped_all_duplicates",
@@ -237,10 +262,6 @@ export const syncOrdersToKst = async ({
     return;
   }
 
-  console.log("[KST] Orders that still need import", {
-    totalRowsToSync: rowsToSync.length,
-    orderIds: collectOrderIds(rowsToSync),
-  });
   const orderIdsToImport = collectOrderIds(rowsToSync);
   emitSyncLogs(
     orderIdsToImport,
@@ -257,10 +278,24 @@ export const syncOrdersToKst = async ({
   const file = buildOrdersExcelFile(rowsToSync);
 
   try {
+    traceLog("kst.syncOrdersToKst.import-request", {
+      traceId,
+      shopId,
+      ownerUserId,
+      platformType,
+      orderIdsToImportCount: orderIdsToImport.length,
+      orderIdsToImportPreview: orderIdsToImport.slice(0, 10).join(","),
+    });
     const res = await fetchPlatformOrdersImportJsonViaProxy({
       file,
       shopId: String(shopId),
       platformType,
+      ownerUserId,
+    });
+    traceLog("kst.syncOrdersToKst.import-response", {
+      traceId,
+      code: res?.code,
+      msg: res?.msg,
     });
 
     const importedOrderIds = orderIdsToImport;
@@ -277,16 +312,8 @@ export const syncOrdersToKst = async ({
     );
     let confirmedOrderIds: string[];
     try {
-      confirmedOrderIds = await confirmImportedOrderIds(importedOrderIds);
+      confirmedOrderIds = await confirmImportedOrderIds(importedOrderIds, traceId);
     } catch (confirmError) {
-      console.error("[KST] Failed to confirm imported orders after import", {
-        importedOrderIds,
-        error: confirmError,
-        errorMessage:
-          confirmError instanceof Error
-            ? confirmError.message
-            : String(confirmError),
-      });
       getNotyf().error(
         "导入请求已提交，但回查 KST 失败，未更新本地缓存，请稍后手动确认"
       );
@@ -331,18 +358,7 @@ export const syncOrdersToKst = async ({
       );
     }
 
-    console.log("[KST] Order import response", res);
-    console.log("[KST] Order import confirmation result", {
-      importedOrderIds,
-      confirmedOrderIds,
-      unconfirmedOrderIds,
-    });
-
     if (unconfirmedOrderIds.length > 0) {
-      console.warn("[KST] Some imported orders were not confirmed remotely", {
-        importedOrderIds,
-        unconfirmedOrderIds,
-      });
       emitSyncLogs(
         unconfirmedOrderIds,
         "kst_sync_unconfirmed_after_import",
@@ -374,7 +390,6 @@ export const syncOrdersToKst = async ({
   } catch (error) {
     const msg =
       error instanceof Error ? error.message : "同步到 KST 失败，请重试";
-    console.error("[KST] Failed to import orders into KST", error);
     getNotyf().error(msg);
     emitSyncLogs(
       orderIdsToImport,

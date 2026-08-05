@@ -11,7 +11,7 @@ import type { KstProxyRequest } from "./kst-proxy-types";
  * @returns 接口返回的 JSON（未做 code 校验，由调用方按业务处理）
  */
 export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unknown> {
-  const { path, method = "GET", query, body, formFile, formFields, token } = req;
+  const { path, method = "GET", headers: customHeaders, query, body, formFile, formFields, token } = req;
 
   const pathNormalized = path.startsWith("/") ? path : `/${path}`;
   let url = `${KST_BASE_URL.replace(/\/$/, "")}${pathNormalized}`;
@@ -22,6 +22,7 @@ export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unk
   }
 
   const headers: Record<string, string> = {
+    ...(customHeaders ?? {}),
     Accept: "application/json, text/plain, */*",
     Authorization: `Bearer ${token}`,
   };

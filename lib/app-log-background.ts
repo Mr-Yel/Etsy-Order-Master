@@ -171,12 +171,6 @@ async function signHeaders(body: PreparedAppLogEntry): Promise<Record<string, st
 
 async function uploadEntry(entry: PreparedAppLogEntry): Promise<void> {
   const headers = await signHeaders(entry);
-  const uploadUrl = `${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`;
-  console.log("[APP-LOG] Uploading log entry", {
-    orderNo: entry.orderNo,
-    uploadUrl,
-    contentLength: entry.content.length,
-  });
   const response = await fetch(`${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`, {
     method: "POST",
     headers: {
@@ -186,55 +180,18 @@ async function uploadEntry(entry: PreparedAppLogEntry): Promise<void> {
     body: JSON.stringify(entry),
   });
 
-  console.log("[APP-LOG] Upload response received", {
-    orderNo: entry.orderNo,
-    status: response.status,
-    ok: response.ok,
-  });
-
   if (!response.ok) {
-    const responseText = await response.text().catch(() => "");
-    console.warn("[APP-LOG] Log upload failed", {
-      status: response.status,
-      statusText: response.statusText,
-      orderNo: entry.orderNo,
-      responseText: truncateString(responseText, 1000),
-    });
+    await response.text().catch(() => "");
   }
 }
 
 async function shouldUploadLogs(): Promise<boolean> {
   if (!APP_LOG_BASE_URL || !APP_LOG_CLIENT_ID || !APP_LOG_CLIENT_SECRET) {
-    console.warn("[APP-LOG] Upload disabled by missing config", {
-      hasBaseUrl: Boolean(APP_LOG_BASE_URL),
-      hasClientId: Boolean(APP_LOG_CLIENT_ID),
-      hasClientSecret: Boolean(APP_LOG_CLIENT_SECRET),
-      uploadUrl: APP_LOG_BASE_URL
-        ? `${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`
-        : "",
-    });
-    if (!hasLoggedConfigWarning) {
-      hasLoggedConfigWarning = true;
-      console.warn(
-        "[APP-LOG] Logging is disabled because base URL or signing credentials are missing"
-      );
-    }
+    hasLoggedConfigWarning = true;
     return false;
   }
 
   const enabled = await isAppLogEnabled();
-  console.log("[APP-LOG] Upload gate evaluated", {
-    enabled,
-    hasBaseUrl: Boolean(APP_LOG_BASE_URL),
-    hasClientId: Boolean(APP_LOG_CLIENT_ID),
-    hasClientSecret: Boolean(APP_LOG_CLIENT_SECRET),
-    uploadUrl: `${APP_LOG_BASE_URL}${APP_LOG_PATHNAME}`,
-  });
-  if (!enabled) {
-    console.warn("[APP-LOG] Upload disabled by local toggle", {
-      storageKey: "eomAppLogEnabled",
-    });
-  }
   return enabled;
 }
 
@@ -248,11 +205,7 @@ async function drainQueue(): Promise<void> {
       if (!currentEntry) continue;
       try {
         // await uploadEntry(currentEntry);
-      } catch (error) {
-        console.warn("[APP-LOG] Failed to upload log entry", {
-          orderNo: currentEntry.orderNo,
-          error: sanitizeForLog(error),
-        });
+      } catch {
       }
     }
   } finally {
@@ -264,32 +217,10 @@ export async function enqueueAppLogFromEvent(
   payload: AppLogEvent,
   sender?: AppLogSender
 ): Promise<void> {
-  /*
-  if (!(await shouldUploadLogs())) {
-    console.log("[APP-LOG] Skip enqueue because upload is disabled", {
-      event: payload.event,
-      orderNo: payload.orderNo ?? APP_LOG_SYSTEM_ORDER_NO,
-    });
-    return;
-  }
-  */
-
   const entry = {
     orderNo: getNormalizedOrderNo(payload.orderNo),
     content: buildLogContent(payload, sender),
   };
-  /*
-  pendingEntries.push(entry);
-  console.log("[APP-LOG] Enqueued log entry", {
-    event: payload.event,
-    orderNo: entry.orderNo,
-    queueSize: pendingEntries.length,
-    senderUrl: sender?.url ?? "",
-    senderOrigin: sender?.origin ?? "",
-  });
-
-  void drainQueue();
-  */
 }
 
 export function logBackgroundRuntimeStarted(): void {

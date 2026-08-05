@@ -77,6 +77,16 @@ function emitLogsForOrderIds(
   });
 }
 
+const DUP_SYNC_TRACE_PREFIX = "[DUP-SYNC-TRACE]";
+
+function traceLog(event: string, details: Record<string, unknown>): void {
+  const body = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, "_")}`)
+    .join(" ");
+  console.log(`${DUP_SYNC_TRACE_PREFIX} ${event}${body ? ` ${body}` : ""}`);
+}
+
 /**
  * 脚本注入状态管理
  * 用于跟踪已注入的脚本，避免重复注入
@@ -104,7 +114,6 @@ function injectScript(scriptPath: string): Promise<void> {
     // 检查脚本是否已经注入（通过 DOM）
     const scriptId = `injected-script-${scriptPath}`;
     if (document.getElementById(scriptId)) {
-      console.log(`✅ [隔离世界] 脚本 ${scriptPath} 已存在，跳过注入`);
       scriptInjectionState.pageInject.injected = true;
       const resolvedPromise = Promise.resolve();
       scriptInjectionState.pageInject.promise = resolvedPromise;
@@ -117,12 +126,10 @@ function injectScript(scriptPath: string): Promise<void> {
       script.id = scriptId;
       script.src = browser.runtime.getURL(scriptPath as any);
       script.onload = function () {
-        console.log(`✅ [隔离世界] 脚本 ${scriptPath} 注入成功`);
         scriptInjectionState.pageInject.injected = true;
         resolve();
       };
       script.onerror = function () {
-        console.error(`❌ [隔离世界] 脚本 ${scriptPath} 注入失败`);
         scriptInjectionState.pageInject.injected = false;
         scriptInjectionState.pageInject.promise = null;
         reject(new Error(`脚本 ${scriptPath} 注入失败`));
@@ -139,7 +146,6 @@ function injectScript(scriptPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const scriptId = `injected-script-${scriptPath}`;
     if (document.getElementById(scriptId)) {
-      console.log(`✅ [隔离世界] 脚本 ${scriptPath} 已存在，跳过注入`);
       resolve();
       return;
     }
@@ -148,11 +154,9 @@ function injectScript(scriptPath: string): Promise<void> {
     script.id = scriptId;
     script.src = browser.runtime.getURL(scriptPath as any);
     script.onload = function () {
-      console.log(`✅ [隔离世界] 脚本 ${scriptPath} 注入成功`);
       resolve();
     };
     script.onerror = function () {
-      console.error(`❌ [隔离世界] 脚本 ${scriptPath} 注入失败`);
       reject(new Error(`脚本 ${scriptPath} 注入失败`));
     };
     (document.head || document.documentElement).appendChild(script);
@@ -171,9 +175,7 @@ async function initializeScriptInjection(): Promise<void> {
     // 2. 修改 select 选项（change-select-option）
     // 3. 修改 input 值（change-input-value）
     await injectScript("page-inject.js");
-    console.log("✅ [隔离世界] 脚本注入初始化完成");
-  } catch (error) {
-    console.error("❌ [隔离世界] 脚本注入初始化失败:", error);
+  } catch {
     // 不抛出错误，允许后续功能降级处理
   }
 }
@@ -213,18 +215,12 @@ async function getEtsyDataFromMainWorld(): Promise<{
       };
     }
 
-    console.log("✅ [隔离世界] 成功从主世界获取 Etsy 数据", {
-      shopId,
-      orderStatesCount: orderStates?.length ?? 0,
-    });
-
     return {
       success: true,
       shopId,
       orderStates,
     };
   } catch (error) {
-    console.error("❌ [隔离世界] 获取 Etsy 数据时发生错误:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "无法获取 Etsy 数据",
@@ -397,7 +393,6 @@ export default defineContentScript({
   async main() {
     // 初始化脚本注入（在启动时立即注入 page-inject.js）
     await initializeScriptInjection();
-    console.log("✅ [隔离世界] content main 已启动，准备处理 Etsy move-orders 拦截与自动同步到 KST 逻辑");
 
     // 缓存从主世界获取的 Etsy 数据（shopId 与 orderStates）
     let cachedShopId: number | undefined;
@@ -410,16 +405,10 @@ export default defineContentScript({
     }> | null = null;
 
     const ensureEtsyData = async () => {
-      console.log("🔍 [隔离世界] ensureEtsyData 调用开始，检查缓存");
       if (cachedShopId != null && cachedOrderStates != null) {
-        console.log("✅ [隔离世界] 使用缓存的 Etsy 数据", {
-          shopId: cachedShopId,
-          orderStatesCount: cachedOrderStates.length,
-        });
         return { shopId: cachedShopId, orderStates: cachedOrderStates };
       }
       if (!etsyDataPromise) {
-        console.log("📤 [隔离世界] 无缓存，将通过 getEtsyDataFromMainWorld 请求主世界数据");
         etsyDataPromise = getEtsyDataFromMainWorld().finally(() => {
           etsyDataPromise = null;
         });
@@ -428,14 +417,6 @@ export default defineContentScript({
       if (result.success) {
         cachedShopId = result.shopId;
         cachedOrderStates = result.orderStates ?? [];
-        console.log("✅ [隔离世界] ensureEtsyData 获取主世界数据成功", {
-          shopId: cachedShopId,
-          orderStatesCount: cachedOrderStates.length,
-        });
-      } else {
-        console.warn("⚠️ [隔离世界] ensureEtsyData 获取主世界数据失败", {
-          error: result.error,
-        });
       }
       return { shopId: cachedShopId, orderStates: cachedOrderStates };
     };
@@ -453,6 +434,7 @@ export default defineContentScript({
         orderIds: (string | number)[];
       }
     >();
+    let moveOrdersResponseInvocationCounter = 0;
     const pendingUpdateShipByDateByRequestId = new Map<
       string,
       {
@@ -485,15 +467,8 @@ export default defineContentScript({
             .filter((id) => id.length > 0)
         )
       );
-      console.log("[待处理监听] 入口", {
-        requestId,
-        shopId,
-        targetStateId,
-        orderIdsCount: orderIds.length,
-      });
 
       if (shopId == null) {
-        console.warn("[待处理监听] 同步中止：shopId 为空", { requestId });
         const idPreview = formatOrderIdsPreview(orderIds);
         getNotyf().error(
           idPreview
@@ -503,7 +478,6 @@ export default defineContentScript({
         return;
       }
       if (!orderIds.length) {
-        console.warn("[待处理监听] 同步中止：orderIds 为空", { requestId });
         getNotyf().error("没有待同步的订单");
         return;
       }
@@ -516,28 +490,10 @@ export default defineContentScript({
           }))
           .filter((pair) => pair.exportOrderId);
 
-        let syncStatus: ResolvedOrderSyncStatus;
-        try {
-          syncStatus = await resolveOrderSyncStatus(
-            exportIdPairs.map((pair) => pair.exportOrderId)
-          );
-        } catch (error) {
-          console.error("[auto-sync] failed to resolve sync status before Etsy fetch", {
-            requestId,
-            shopId,
-            exportOrderIdsPreview: exportIdPairs
-              .map((pair) => pair.exportOrderId)
-              .slice(0, 10),
-            error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
-          throw error;
-        }
+        const syncStatus = await resolveOrderSyncStatus(
+          exportIdPairs.map((pair) => pair.exportOrderId)
+        );
         if (syncStatus.localDuplicateOrderIds.length > 0) {
-          console.log("[auto-sync] skipped locally cached order IDs before Etsy fetch", {
-            requestId,
-            skippedIds: syncStatus.localDuplicateOrderIds,
-          });
           emitLogsForOrderIds(
             syncStatus.localDuplicateOrderIds,
             "auto_sync_skipped_local_duplicate",
@@ -550,10 +506,6 @@ export default defineContentScript({
           );
         }
         if (syncStatus.remoteDuplicateOrderIds.length > 0) {
-          console.log("[auto-sync] skipped remotely duplicated order IDs before Etsy fetch", {
-            requestId,
-            skippedIds: syncStatus.remoteDuplicateOrderIds,
-          });
           emitLogsForOrderIds(
             syncStatus.remoteDuplicateOrderIds,
             "auto_sync_skipped_remote_duplicate",
@@ -588,20 +540,11 @@ export default defineContentScript({
         const stateIdStr =
           targetStateId != null ? String(targetStateId) : undefined;
         if (!stateIdStr) {
-          console.warn("[待处理监听] 同步中止：targetStateId 为空", {
-            requestId,
-          });
           return;
         }
 
         const baseParams = getOrderListBaseParams(stateIdStr);
         const requestedCount = Math.max(orderIds.length, 100);
-        console.log("[待处理监听] 同步 步骤 1/4：请求待处理订单列表", {
-          requestId,
-          shopId,
-          requestedCount,
-          filtersOrderStateId: baseParams["filters[order_state_id]"],
-        });
 
         const { orders, buyers } = await fetchOrderList(
           shopId,
@@ -609,12 +552,6 @@ export default defineContentScript({
           baseParams,
           { credentials: "include" }
         );
-
-        console.log("[待处理监听] fetchOrderList 返回", {
-          requestId,
-          totalOrders: orders.length,
-          buyersCount: buyers.length,
-        });
 
         const targetIdSet = new Set(orderIds.map((v) => String(v)));
         const filteredOrders = orders.filter((o) =>
@@ -624,11 +561,6 @@ export default defineContentScript({
         const foundIdSet = new Set(foundIds);
         const missingIds = orderIds.filter((id) => !foundIdSet.has(String(id)));
         if (missingIds.length > 0) {
-          console.warn("[待处理监听] 部分订单在列表中未找到（可能延迟或分页未覆盖）", {
-            requestId,
-            missingCount: missingIds.length,
-            missingIdsPreview: missingIds.slice(0, 10),
-          });
           emitLogsForOrderIds(
             missingIds,
             "auto_sync_missing_from_etsy_list",
@@ -641,18 +573,7 @@ export default defineContentScript({
           );
         }
 
-        console.log("[待处理监听] 同步 步骤 2/4：过滤结果", {
-          requestId,
-          expectedCount: orderIds.length,
-          filteredCount: filteredOrders.length,
-          foundIdsPreview: foundIds.slice(0, 5),
-        });
-
         if (!filteredOrders.length) {
-          console.warn("[待处理监听] 同步中止：无匹配订单", {
-            requestId,
-            orderIdsPreview: orderIds.slice(0, 10),
-          });
           const idPreview = formatOrderIdsPreview(orderIds);
           getNotyf().error(
             idPreview
@@ -662,18 +583,12 @@ export default defineContentScript({
           return;
         }
 
-        console.log("[待处理监听] 同步 步骤 3/4：映射为表格行 mapOrdersToTableRows");
         const rows: ExportTableRow[] = mapOrdersToTableRows(
           filteredOrders as EtsyOrder[],
           buyers as EtsyBuyer[],
           { shopId }
         );
-        console.log("[待处理监听] mapOrdersToTableRows 完成", {
-          requestId,
-          rowCount: rows.length,
-        });
 
-        console.log("[待处理监听] 同步 步骤 4/4：同步到 KST 订单系统");
         try {
           await syncOrdersToKst({
             shopId,
@@ -686,18 +601,9 @@ export default defineContentScript({
               pageUrl: location.href,
             },
           });
-          console.log("[待处理监听] KST 同步完成", {
-            requestId,
-            rowCount: rows.length,
-          });
         } catch (syncError) {
           const msg =
             syncError instanceof Error ? syncError.message : "同步到 KST 失败，请重试";
-          console.error("[待处理监听] KST 同步失败", {
-            requestId,
-            error: syncError,
-            errorMessage: msg,
-          });
           emitLogsForOrderIds(
             orderIds,
             "auto_sync_pipeline_failed",
@@ -719,11 +625,6 @@ export default defineContentScript({
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : "自动同步失败，请重试";
-        console.error("[待处理监听] 异常", {
-          requestId,
-          error,
-          errorMessage: msg,
-        });
         emitLogsForOrderIds(
           orderIds,
           "auto_sync_pipeline_exception",
@@ -830,35 +731,23 @@ export default defineContentScript({
           : null;
 
       if (normalizedMoveOrdersMessage) {
-        console.log("[待处理监听] 收到 move-orders 相关消息", {
+        traceLog("content.moveOrders.message", {
           type: normalizedMoveOrdersMessage.type,
           requestId: normalizedMoveOrdersMessage.requestId,
           source: normalizedMoveOrdersMessage.source,
+          status: normalizedMoveOrdersMessage.status,
+          ok: normalizedMoveOrdersMessage.ok,
         });
       }
 
       if (normalizedUpdateShipByDateMessage) {
-        console.log("[发货日期监听] 收到 update-ship-by-date 相关消息", {
-          type: normalizedUpdateShipByDateMessage.type,
-          requestId: normalizedUpdateShipByDateMessage.requestId,
-          orderId: normalizedUpdateShipByDateMessage.orderId,
-          newShipByDate: normalizedUpdateShipByDateMessage.newShipByDate,
-          source: normalizedUpdateShipByDateMessage.source,
-        });
-      }
-
-      if (normalizedUpdateShipByDateMessage) {
-        if (
-          normalizedUpdateShipByDateMessage.source !== "page-inject" &&
-          normalizedUpdateShipByDateMessage.source !== "page"
-        ) {
+        if (normalizedUpdateShipByDateMessage.source !== "page-inject") {
           return;
         }
 
         if (normalizedUpdateShipByDateMessage.type === "updateShipByDate.requested") {
           const requestId = normalizedUpdateShipByDateMessage.requestId;
           if (!requestId) {
-            console.warn("[发货日期监听] 请求缺少 requestId，无法等待成功响应");
             return;
           }
           pendingUpdateShipByDateByRequestId.set(requestId, {
@@ -867,13 +756,6 @@ export default defineContentScript({
             newShipByDate: normalizedUpdateShipByDateMessage.newShipByDate,
             requestBody: normalizedUpdateShipByDateMessage.body,
           });
-          console.log("[发货日期监听] 已缓存请求，等待 Etsy 成功响应", {
-            requestId,
-            shopId: normalizedUpdateShipByDateMessage.shopId,
-            orderId: normalizedUpdateShipByDateMessage.orderId,
-            newShipByDate: normalizedUpdateShipByDateMessage.newShipByDate,
-            cacheSize: pendingUpdateShipByDateByRequestId.size,
-          });
           return;
         }
 
@@ -881,17 +763,11 @@ export default defineContentScript({
           void (async () => {
             const requestId = normalizedUpdateShipByDateMessage.requestId;
             if (!requestId) {
-              console.warn("[发货日期监听] 响应缺少 requestId，无法匹配请求缓存");
               return;
             }
 
             const pending = pendingUpdateShipByDateByRequestId.get(requestId);
             if (!pending) {
-              console.log("[发货日期监听] 未找到对应请求缓存", {
-                requestId,
-                status: normalizedUpdateShipByDateMessage.status,
-                ok: normalizedUpdateShipByDateMessage.ok,
-              });
               return;
             }
 
@@ -902,23 +778,10 @@ export default defineContentScript({
               normalizedUpdateShipByDateMessage.status < 300;
 
             if (!isSuccess) {
-              console.warn("[发货日期监听] Etsy 修改发货日期失败，暂不回传系统", {
-                requestId,
-                orderId: pending.orderId,
-                newShipByDate: pending.newShipByDate,
-                status: normalizedUpdateShipByDateMessage.status,
-                ok: normalizedUpdateShipByDateMessage.ok,
-              });
               pendingUpdateShipByDateByRequestId.delete(requestId);
               return;
             }
 
-            console.log("[发货日期监听] Etsy 修改发货日期成功，开始同步 KST 最晚发货时间", {
-              requestId,
-              shopId: pending.shopId,
-              orderId: pending.orderId,
-              newShipByDate: pending.newShipByDate,
-            });
             void emitAppLog({
               event: "ship_by_date_change_succeeded",
               orderNo: pending.orderId ?? "__SYSTEM__",
@@ -938,11 +801,6 @@ export default defineContentScript({
               },
             });
             if (!pending.orderId || typeof pending.newShipByDate !== "number") {
-              console.log("[发货日期监听] 缺少订单号或 newShipByDate，跳过 KST 更新", {
-                requestId,
-                orderId: pending.orderId,
-                newShipByDate: pending.newShipByDate,
-              });
               pendingUpdateShipByDateByRequestId.delete(requestId);
               return;
             }
@@ -961,22 +819,12 @@ export default defineContentScript({
                 : [];
 
               if (matchedRows.length !== 1) {
-                console.log("[发货日期监听] KST 列表匹配数量不是 1，静默跳过", {
-                  requestId,
-                  platformOrderIds: pending.orderId,
-                  matchedCount: matchedRows.length,
-                  total: listResponse.total,
-                });
                 pendingUpdateShipByDateByRequestId.delete(requestId);
                 return;
               }
 
               const systemOrderId = matchedRows[0]?.id;
               if (!systemOrderId) {
-                console.log("[发货日期监听] KST 列表返回缺少系统订单 id，静默跳过", {
-                  requestId,
-                  platformOrderIds: pending.orderId,
-                });
                 pendingUpdateShipByDateByRequestId.delete(requestId);
                 return;
               }
@@ -993,21 +841,7 @@ export default defineContentScript({
                 latestDeliveryTime,
                 errorInfo,
               });
-
-              console.log("[发货日期监听] 已同步 KST 最晚发货时间和日志", {
-                requestId,
-                systemOrderId,
-                platformOrderId: pending.orderId,
-                latestDeliveryTime,
-              });
-            } catch (error) {
-              console.warn("[发货日期监听] 同步 KST 最晚发货时间失败，已跳过", {
-                requestId,
-                orderId: pending.orderId,
-                newShipByDate: pending.newShipByDate,
-                error,
-                errorMessage: error instanceof Error ? error.message : String(error),
-              });
+            } catch {
             }
             pendingUpdateShipByDateByRequestId.delete(requestId);
           })();
@@ -1018,27 +852,14 @@ export default defineContentScript({
       }
 
       if (!normalizedMoveOrdersMessage) return;
-      if (
-        normalizedMoveOrdersMessage.source !== "page-inject" &&
-        normalizedMoveOrdersMessage.source !== "page"
-      ) {
+      if (normalizedMoveOrdersMessage.source !== "page-inject") {
         return;
       }
 
       if (normalizedMoveOrdersMessage.type === "moveOrders.requested") {
         void (async () => {
-          console.log("[待处理监听] 步骤 1/5：开始处理 move-orders 请求");
           try {
-            console.log("[待处理监听] 步骤 2/5：获取 Etsy 数据（shopId、orderStates）");
             const { shopId, orderStates } = await ensureEtsyData();
-            console.log("[待处理监听] ensureEtsyData 结果", {
-              requestId: normalizedMoveOrdersMessage.requestId,
-              shopId,
-              shopIdOk: shopId != null,
-              orderStatesCount: orderStates?.length ?? 0,
-              orderStatesSummary:
-                orderStates?.map((s) => ({ id: s.order_state_id, name: s.name })) ?? [],
-            });
 
             let parsedBody: any = null;
             const bodyStr =
@@ -1048,24 +869,8 @@ export default defineContentScript({
             if (bodyStr.trim()) {
               try {
                 parsedBody = JSON.parse(bodyStr);
-                console.log("[待处理监听] 请求 body 解析成功", {
-                  requestId: normalizedMoveOrdersMessage.requestId,
-                  hasOrderStateId: parsedBody?.order_state_id != null,
-                  orderIdsLength: Array.isArray(parsedBody?.order_ids)
-                    ? parsedBody.order_ids.length
-                    : 0,
-                });
               } catch {
-                console.warn("[待处理监听] 请求 body JSON 解析失败", {
-                  requestId: normalizedMoveOrdersMessage.requestId,
-                  bodyLength: bodyStr.length,
-                  bodyPreview: bodyStr.slice(0, 200),
-                });
               }
-            } else {
-              console.warn("[待处理监听] 请求 body 为空", {
-                requestId: normalizedMoveOrdersMessage.requestId,
-              });
             }
 
             const orderStateId: number | undefined = parsedBody?.order_state_id;
@@ -1078,13 +883,6 @@ export default defineContentScript({
                 ? orderStates.find((s) => s.order_state_id === orderStateId)?.name ?? ""
                 : "";
 
-            console.log("[待处理监听] 步骤 3/5：解析请求参数", {
-              requestId: normalizedMoveOrdersMessage.requestId,
-              orderStateId,
-              stateName,
-              orderIdsCount: orderIds.length,
-              orderIdsPreview: orderIds.slice(0, 5),
-            });
             emitLogsForOrderIds(
               orderIds,
               "order_state_change_requested",
@@ -1107,53 +905,29 @@ export default defineContentScript({
             // 2. 重复由本地缓存 + KST 远端查重拦截，而不是靠状态判断避免。
             // 3. 这里曾被误改成只允许 New/待处理 触发，导致切换到处理中时 cacheSize=0、响应阶段直接结束。
             // 后续维护请保留该行为，除非业务规则明确变化。
-            const normalizedName = (stateName ?? "").trim().toLowerCase();
             const shouldTriggerAutoSync = true;
-            console.log("[待处理监听] 步骤 4/5：判断是否为目标状态「待处理」", {
-              requestId: normalizedMoveOrdersMessage.requestId,
-              stateName,
-              normalizedName,
-              shouldTriggerAutoSync,
-              matchReason:
-                shouldTriggerAutoSync
-                  ? "当前配置：所有状态变更都触发自动同步"
-                  : "不匹配",
-            });
 
             if (shouldTriggerAutoSync) {
               if (normalizedMoveOrdersMessage.requestId) {
+                const hadExistingPending = pendingMoveToNewByRequestId.has(
+                  normalizedMoveOrdersMessage.requestId
+                );
                 pendingMoveToNewByRequestId.set(normalizedMoveOrdersMessage.requestId, {
                   shopId,
                   targetStateId: orderStateId,
                   targetStateName: stateName,
                   orderIds,
                 });
-                console.log("[待处理监听] 步骤 5/5：已写入缓存，等待响应", {
+                traceLog("content.moveOrders.pending-set", {
                   requestId: normalizedMoveOrdersMessage.requestId,
-                  cachedShopId: shopId,
-                  targetStateId: orderStateId,
+                  source: normalizedMoveOrdersMessage.source,
+                  hadExistingPending,
                   orderIdsCount: orderIds.length,
                   cacheSize: pendingMoveToNewByRequestId.size,
-                  cacheKeys: [...pendingMoveToNewByRequestId.keys()],
-                });
-              } else {
-                console.warn("[待处理监听] 无法缓存：缺少 requestId", {
-                  stateName,
-                  orderIdsCount: orderIds.length,
                 });
               }
-            } else {
-              console.log("[待处理监听] 非待处理状态，不缓存", {
-                requestId: normalizedMoveOrdersMessage.requestId,
-                stateName,
-              });
             }
-          } catch (err) {
-            console.error("[待处理监听] 处理 move-orders 请求异常", {
-              requestId: normalizedMoveOrdersMessage.requestId,
-              error: err,
-              errorMessage: err instanceof Error ? err.message : String(err),
-            });
+          } catch {
           }
         })();
       }
@@ -1161,31 +935,28 @@ export default defineContentScript({
       if (normalizedMoveOrdersMessage.type === "moveOrders.responded") {
         void (async () => {
           const requestId = normalizedMoveOrdersMessage.requestId;
-          console.log("[待处理监听] 响应 步骤 1/6：收到 move-orders 响应", {
+          const responseInvocationId = `${requestId ?? "missing-request-id"}#${++moveOrdersResponseInvocationCounter}`;
+          traceLog("content.moveOrders.response-start", {
+            responseInvocationId,
             requestId,
+            source: normalizedMoveOrdersMessage.source,
             status: normalizedMoveOrdersMessage.status,
             ok: normalizedMoveOrdersMessage.ok,
-            bodyLength:
-              typeof normalizedMoveOrdersMessage.body === "string"
-                ? normalizedMoveOrdersMessage.body.length
-                : 0,
+            cacheSizeBeforeLookup: pendingMoveToNewByRequestId.size,
           });
 
           if (!requestId) {
-            console.warn("[待处理监听] 响应 步骤 1 失败：缺少 requestId，无法匹配缓存");
             return;
           }
 
-          console.log("[待处理监听] 响应 步骤 2/6：查找请求缓存", {
-            requestId,
-            cacheSize: pendingMoveToNewByRequestId.size,
-            cacheKeys: [...pendingMoveToNewByRequestId.keys()],
-          });
           const pending = pendingMoveToNewByRequestId.get(requestId);
+          traceLog("content.moveOrders.response-pending-lookup", {
+            responseInvocationId,
+            requestId,
+            foundPending: Boolean(pending),
+            cacheSizeAfterLookup: pendingMoveToNewByRequestId.size,
+          });
           if (!pending) {
-            console.log("[待处理监听] 未找到对应请求缓存（可能非待处理或 requestId 不一致）", {
-              requestId,
-            });
             void emitAppLog({
               event: "order_state_change_response_without_pending",
               orderNo: "__SYSTEM__",
@@ -1204,30 +975,21 @@ export default defineContentScript({
             });
             return;
           }
-          console.log("[待处理监听] 已找到缓存", {
-            requestId,
-            shopId: pending.shopId,
-            orderIdsCount: pending.orderIds.length,
-          });
 
           const isSuccess =
             normalizedMoveOrdersMessage.ok === true &&
             typeof normalizedMoveOrdersMessage.status === "number" &&
             normalizedMoveOrdersMessage.status >= 200 &&
             normalizedMoveOrdersMessage.status < 300;
-          console.log("[待处理监听] 响应 步骤 3/6：检查 HTTP 状态", {
+          traceLog("content.moveOrders.response-success-check", {
+            responseInvocationId,
             requestId,
+            isSuccess,
             status: normalizedMoveOrdersMessage.status,
             ok: normalizedMoveOrdersMessage.ok,
-            isSuccess,
-            willTrigger: isSuccess,
           });
 
           if (!isSuccess) {
-            console.warn("[待处理监听] 响应非 2xx，取消同步到 KST", {
-              requestId,
-              status: normalizedMoveOrdersMessage.status,
-            });
             emitLogsForOrderIds(
               pending.orderIds,
               "order_state_change_failed",
@@ -1251,25 +1013,18 @@ export default defineContentScript({
                 : "Etsy 操作失败，未同步到 KST"
             );
             pendingMoveToNewByRequestId.delete(requestId);
-            console.log("[待处理监听] 已从缓存移除", {
-              requestId,
-              cacheSize: pendingMoveToNewByRequestId.size,
-            });
             return;
           }
 
-          console.log("[待处理监听] 响应 步骤 4/6：检查 KST 登录状态");
           const loggedIn = await isLoggedIn();
+          traceLog("content.moveOrders.response-auth-check", {
+            responseInvocationId,
+            requestId,
+            loggedIn,
+            cacheStillHasPending: pendingMoveToNewByRequestId.has(requestId),
+          });
           if (!loggedIn) {
             const authDebugSnapshot = await getAuthDebugSnapshot();
-            console.warn("[待处理监听] 未登录 KST，中断流程", {
-              requestId,
-              authDebugSnapshot,
-              pendingOrderIdsPreview: pending.orderIds.slice(0, 10),
-              pendingOrderIdsCount: pending.orderIds.length,
-              currentUrl: location.href,
-              runtimeId: browser.runtime.id,
-            });
             emitLogsForOrderIds(
               pending.orderIds,
               "auto_sync_skipped_not_logged_in",
@@ -1290,7 +1045,6 @@ export default defineContentScript({
             pendingMoveToNewByRequestId.delete(requestId);
             return;
           }
-          console.log("[待处理监听] 已登录 KST，继续");
           emitLogsForOrderIds(
             pending.orderIds,
             "order_state_change_succeeded",
@@ -1309,17 +1063,18 @@ export default defineContentScript({
           );
 
           pendingMoveToNewByRequestId.delete(requestId);
-          console.log("[待处理监听] 响应 步骤 5/6：清理缓存并触发同步到 KST", {
+          traceLog("content.moveOrders.pending-delete-before-sync", {
+            responseInvocationId,
             requestId,
-            cacheSizeAfter: pendingMoveToNewByRequestId.size,
-            params: {
-              shopId: pending.shopId,
-              targetStateId: pending.targetStateId,
-              orderIdsCount: pending.orderIds.length,
-            },
+            cacheSizeAfterDelete: pendingMoveToNewByRequestId.size,
           });
-
-          console.log("[待处理监听] 响应 步骤 6/6：调用");
+          traceLog("content.moveOrders.sync-dispatch", {
+            responseInvocationId,
+            requestId,
+            shopId: pending.shopId,
+            targetStateId: pending.targetStateId,
+            orderIdsCount: pending.orderIds.length,
+          });
           await syncOrdersForMoveToPending({
             shopId: pending.shopId,
             targetStateId: pending.targetStateId,
@@ -1333,11 +1088,6 @@ export default defineContentScript({
 
     // 监听来自 popup / 扩展页的统一 Etsy content bridge 请求
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      console.log(
-        "🚀 ~ browser.runtime.onMessage.addListener ~ message:",
-        message
-      );
-
       if ((message as { type?: string })?.type === ETSY_CONTENT_BRIDGE_MESSAGE_TYPE) {
         void handleEtsyContentBridgeRequest(
           message as EtsyContentBridgeRequest
@@ -1363,8 +1113,7 @@ export default defineContentScript({
         try {
           const app = createApp(ContentScriptWrapper);
           app.mount(container);
-        } catch (error) {
-          console.error("ContentScript 包装组件挂载失败:", error);
+        } catch {
         }
       } else {
         setTimeout(init, 100);

@@ -20,6 +20,21 @@
     domInputSet: "dom.input.set",
     imagesFetchAsBase64: "images.fetchAsBase64",
   };
+  var DUP_SYNC_TRACE_PREFIX = "[DUP-SYNC-TRACE]";
+
+  function traceLog(eventName, details) {
+    try {
+      var parts = [];
+      Object.keys(details || {}).forEach(function (key) {
+        var value = details[key];
+        if (value === undefined || value === null || value === "") return;
+        parts.push(key + "=" + String(value).replace(/\s+/g, "_"));
+      });
+      console.log(DUP_SYNC_TRACE_PREFIX + " " + eventName + (parts.length ? " " + parts.join(" ") : ""));
+    } catch (e) {
+      // 忽略日志错误
+    }
+  }
 
   function postBridgeSuccess(requestId, data) {
     window.postMessage(
@@ -50,6 +65,14 @@
   }
 
   function postBridgeEvent(eventName, payload) {
+    traceLog("page-inject.bridge-event", {
+      eventName: eventName,
+      requestId: payload && payload.requestId,
+      source: payload && payload.source,
+      type: payload && payload.type,
+      status: payload && payload.status,
+      ok: payload && payload.ok,
+    });
     window.postMessage(
       {
         type: ETSY_BRIDGE_EVENT_TYPE,
@@ -248,6 +271,12 @@
               method,
               requestBodyText
             );
+            traceLog("page-inject.fetch.request.raw", {
+              requestId: requestId,
+              type: requestPayload && requestPayload.type,
+              method: method,
+              url: url,
+            });
             window.postMessage(
               requestPayload,
               "*"
@@ -276,6 +305,13 @@
                     respText,
                     requestPayload
                   );
+                  traceLog("page-inject.fetch.response.raw", {
+                    requestId: requestId,
+                    type: responsePayload && responsePayload.type,
+                    status: response.status,
+                    ok: response.ok,
+                    url: url,
+                  });
                   window.postMessage(
                     responsePayload,
                     "*"
@@ -336,6 +372,12 @@
               _method,
               typeof body === "string" ? body : null
             );
+            traceLog("page-inject.xhr.request.raw", {
+              requestId: requestId,
+              type: requestPayload && requestPayload.type,
+              method: _method,
+              url: _url,
+            });
             window.postMessage(
               requestPayload,
               "*"
@@ -356,6 +398,13 @@
                 xhr.responseText,
                 requestPayload
               );
+              traceLog("page-inject.xhr.response.raw", {
+                requestId: requestId,
+                type: responsePayload && responsePayload.type,
+                status: xhr.status,
+                ok: xhr.status >= 200 && xhr.status < 300,
+                url: _url,
+              });
               window.postMessage(
                 responsePayload,
                 "*"
@@ -411,7 +460,6 @@
       
       return { success: false, error: "未找到匹配的选项" };
     } catch (error) {
-      console.error("❌ [主世界] 修改 select 选项时发生错误:", error);
       return { success: false, error: error.message || "未知错误" };
     }
   }
@@ -441,7 +489,6 @@
 
       return { success: true };
     } catch (error) {
-      console.error("❌ [主世界] 修改 input 值时发生错误:", error);
       return { success: false, error: error.message || "未知错误" };
     }
   }
@@ -583,6 +630,4 @@
   // 启用对 Etsy 目标接口的劫持
   patchFetchForEtsyRequests();
   patchXHRForEtsyRequests();
-
-  console.log("✅ [主世界] page-inject.js 已加载，可以访问 window.Etsy 对象和 DOM 操作");
 })();

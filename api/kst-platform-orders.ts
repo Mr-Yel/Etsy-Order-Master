@@ -244,6 +244,7 @@ export type PlatformOrdersImportJsonParams = {
   file: File;
   shopId: string;
   platformType: string;
+  ownerUserId?: number;
 };
 
 /** 平台订单导入接口响应（与列表接口一致：code、msg） */
@@ -268,6 +269,9 @@ export async function fetchPlatformOrdersImportJson(
   formData.append("file", params.file, params.file.name);
   formData.append("shopId", params.shopId);
   formData.append("platformType", params.platformType);
+  if (typeof params.ownerUserId === "number" && Number.isFinite(params.ownerUserId)) {
+    formData.append("ownerUserId", String(params.ownerUserId));
+  }
 
   const url = `${PLATFORM_ORDERS_BASE}${PLATFORM_ORDERS_IMPORT_JSON_PATH}`;
   const res = await fetch(url, {
@@ -320,6 +324,9 @@ export async function fetchPlatformOrdersImportJsonViaProxy(
     formFields: {
       shopId: params.shopId,
       platformType: params.platformType,
+      ...(typeof params.ownerUserId === "number" && Number.isFinite(params.ownerUserId)
+        ? { ownerUserId: String(params.ownerUserId) }
+        : {}),
     },
   });
   if (data?.code !== 200) {
