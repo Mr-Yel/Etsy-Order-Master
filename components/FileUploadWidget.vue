@@ -162,8 +162,8 @@ const fillFormFields = async (orderData: OrderData[]) => {
     }
 
     try {
-      // 构建选择器
-      const inputSelector = `input[name="trackingCode-${orderNumber}"]`;
+      // 只按 name 定位，兼容原生 input 和 Etsy 新版自定义元素 clg-text-input
+      const inputSelector = `[name="trackingCode-${orderNumber}"]`;
 
       // 使用 await 等待 Promise 结果
       const selectSuccess = await changeSelectOption(
