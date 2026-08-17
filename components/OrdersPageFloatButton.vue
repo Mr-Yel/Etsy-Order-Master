@@ -3,6 +3,11 @@ import { ref, onMounted, onUnmounted } from "vue";
 import OrderExportModal from "./OrderExportModal.vue";
 import OrderImageExportModal from "./OrderImageExportModal.vue";
 import { ensureSession } from "@/lib/auth-manager";
+import {
+  EOM_UI_SUFFIX,
+  IS_TEST_BUILD,
+  getRuntimeScopedId,
+} from "@/lib/runtime-identity";
 
 const showModal = ref(false);
 const showImageExportModal = ref(false);
@@ -33,7 +38,7 @@ const MAX_WAIT_MS = 15000; // 最多等待 15 秒
 function attachToToolbar(toolbar: HTMLDivElement) {
   if (injectedContainer) return;
   const container = document.createElement("div");
-  container.id = "etsy-order-master-export-btn-container";
+  container.id = getRuntimeScopedId("etsy-order-master-export-btn-container");
   container.className = "dropdown-group etsy-order-master-export-group";
   toolbar.appendChild(container);
   injectedContainer = container;
@@ -100,16 +105,16 @@ onUnmounted(() => {
 
 <template>
   <teleport v-if="targetEl" :to="targetEl">
-    <div class="order-export-inline">
+    <div :class="['order-export-inline', { 'is-test-build': IS_TEST_BUILD }]">
       <button type="button" class="order-export-btn" @click="openModal">
-        订单管理
+        订单管理{{ EOM_UI_SUFFIX }}
       </button>
       <button
         type="button"
         class="order-export-btn order-image-export-btn"
         @click="openImageExportModal"
       >
-        订单图片导出
+        订单图片导出{{ EOM_UI_SUFFIX }}
       </button>
       <OrderExportModal v-if="showModal" @close="closeModal" />
       <OrderImageExportModal
@@ -158,5 +163,10 @@ onUnmounted(() => {
 
 .order-image-export-btn:hover {
   background: #0d9488;
+}
+
+.is-test-build .order-export-btn {
+  outline: 2px solid #f59e0b;
+  outline-offset: 1px;
 }
 </style>

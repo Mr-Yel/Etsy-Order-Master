@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 
-function createPageInjectHarness() {
+function createPageInjectHarness(channel = "production") {
   const messages = [];
   const listeners = {};
   const window = {
@@ -45,6 +45,9 @@ function createPageInjectHarness() {
     URL,
     console,
     document: {
+      currentScript: {
+        src: `chrome-extension://extension-id/page-inject.js?eom_channel=${channel}`,
+      },
       querySelector() {
         return null;
       },
@@ -114,5 +117,38 @@ test("page-inject emits request and response events for update-ship-by-date fetc
         message.payload.newShipByDate === 1780675140
     ),
     true
+  );
+});
+
+test("page-inject isolates test mode events from production mode", async () => {
+  const { messages, window } = createPageInjectHarness("test");
+
+  await window.fetch(
+    "https://www.etsy.com/api/v3/ajax/shop/26833914/mission-control/orders/fulfillment/update-ship-by-date/4068847770",
+    {
+      method: "POST",
+      body: JSON.stringify({ new_ship_by_date: 1780675140 }),
+    }
+  );
+
+  assert.equal(
+    messages.some(
+      (message) => message?.type === "etsy-update-ship-by-date-request_TEST"
+    ),
+    true
+  );
+  assert.equal(
+    messages.some(
+      (message) => message?.type === "etsy-update-ship-by-date-response_TEST"
+    ),
+    true
+  );
+  assert.equal(
+    messages.some((message) => message?.type === "ETSY_BRIDGE_EVENT_TEST"),
+    true
+  );
+  assert.equal(
+    messages.some((message) => message?.type === "ETSY_BRIDGE_EVENT"),
+    false
   );
 });

@@ -1,5 +1,8 @@
-export const ETSY_CONTENT_BRIDGE_MESSAGE_TYPE =
-  "ETSY_CONTENT_BRIDGE_REQUEST" as const;
+import { getRuntimeScopedMessageType } from "./runtime-identity";
+
+export const ETSY_CONTENT_BRIDGE_MESSAGE_TYPE = getRuntimeScopedMessageType(
+  "ETSY_CONTENT_BRIDGE_REQUEST"
+);
 
 export const ETSY_CONTENT_BRIDGE_ACTIONS = {
   contextGet: "context.get",

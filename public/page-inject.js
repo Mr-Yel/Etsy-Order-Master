@@ -9,9 +9,21 @@
 (function () {
   "use strict";
 
-  var ETSY_BRIDGE_REQUEST_TYPE = "ETSY_BRIDGE_REQUEST";
-  var ETSY_BRIDGE_RESPONSE_TYPE = "ETSY_BRIDGE_RESPONSE";
-  var ETSY_BRIDGE_EVENT_TYPE = "ETSY_BRIDGE_EVENT";
+  var currentScriptSrc =
+    (document.currentScript && document.currentScript.src) || "";
+  var EOM_RUNTIME_CHANNEL =
+    /[?&]eom_channel=test(?:&|$)/.test(currentScriptSrc)
+      ? "test"
+      : "production";
+  var EOM_MESSAGE_SUFFIX = EOM_RUNTIME_CHANNEL === "test" ? "_TEST" : "";
+
+  function getRuntimeScopedMessageType(productionType) {
+    return productionType + EOM_MESSAGE_SUFFIX;
+  }
+
+  var ETSY_BRIDGE_REQUEST_TYPE = getRuntimeScopedMessageType("ETSY_BRIDGE_REQUEST");
+  var ETSY_BRIDGE_RESPONSE_TYPE = getRuntimeScopedMessageType("ETSY_BRIDGE_RESPONSE");
+  var ETSY_BRIDGE_EVENT_TYPE = getRuntimeScopedMessageType("ETSY_BRIDGE_EVENT");
   var ETSY_BRIDGE_VERSION = 1;
 
   var ETSY_BRIDGE_ACTIONS = {
@@ -155,8 +167,8 @@
     if (shouldInterceptEtsyMoveOrders(url, method)) {
       return {
         kind: "moveOrders",
-        requestType: "etsy-move-orders-request",
-        responseType: "etsy-move-orders-response",
+        requestType: getRuntimeScopedMessageType("etsy-move-orders-request"),
+        responseType: getRuntimeScopedMessageType("etsy-move-orders-response"),
         requestedEvent: "moveOrders.requested",
         respondedEvent: "moveOrders.responded",
         requestIdPrefix: transport === "xhr" ? "etsy-move-orders-xhr" : "etsy-move-orders",
@@ -168,8 +180,8 @@
     if (updateShipByDateMatch) {
       return {
         kind: "updateShipByDate",
-        requestType: "etsy-update-ship-by-date-request",
-        responseType: "etsy-update-ship-by-date-response",
+        requestType: getRuntimeScopedMessageType("etsy-update-ship-by-date-request"),
+        responseType: getRuntimeScopedMessageType("etsy-update-ship-by-date-response"),
         requestedEvent: "updateShipByDate.requested",
         respondedEvent: "updateShipByDate.responded",
         requestIdPrefix:
@@ -228,8 +240,9 @@
    */
   function patchFetchForEtsyRequests() {
     if (typeof window.fetch !== "function") return;
-    if (window.__etsyRequestFetchPatched) return;
-    window.__etsyRequestFetchPatched = true;
+    var patchFlag = "__etsyRequestFetchPatched" + EOM_MESSAGE_SUFFIX;
+    if (window[patchFlag]) return;
+    window[patchFlag] = true;
 
     var originalFetch = window.fetch;
 
@@ -337,8 +350,9 @@
    */
   function patchXHRForEtsyRequests() {
     if (typeof window.XMLHttpRequest !== "function") return;
-    if (window.__etsyRequestXHRPatched) return;
-    window.__etsyRequestXHRPatched = true;
+    var patchFlag = "__etsyRequestXHRPatched" + EOM_MESSAGE_SUFFIX;
+    if (window[patchFlag]) return;
+    window[patchFlag] = true;
 
     var OriginalXHR = window.XMLHttpRequest;
 
