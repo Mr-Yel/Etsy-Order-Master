@@ -4,7 +4,7 @@
       <header class="login-header">
         <div class="login-brand">
           <span class="login-logo">EOM</span>
-          <h1 class="login-title">Etsy Order Master</h1>
+          <h1 class="login-title">{{ EOM_DISPLAY_NAME }}</h1>
         </div>
       </header>
 
@@ -83,6 +83,7 @@ import {
   setRememberedCredentials,
   clearRememberedCredentials,
 } from "@/lib/auth-manager";
+import { EOM_DISPLAY_NAME } from "@/lib/runtime-identity";
 
 const { user, isLoggedIn, login: doLogin, logout: doLogout } = useAuth();
 

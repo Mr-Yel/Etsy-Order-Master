@@ -2,7 +2,7 @@
   <div class="popup-container">
     <div class="header">
       <div class="header-left">
-        <h1 class="title">Etsy Order Master</h1>
+        <h1 class="title">{{ EOM_DISPLAY_NAME }}</h1>
         <p v-if="shopId != null" class="shop-id">
           当前店铺 ID：{{ shopId }}
         </p>
@@ -48,6 +48,7 @@ import OrderExport from "@/components/OrderExport.vue";
 import ImageDownload from "@/components/ImageDownload.vue";
 import { getEtsyContextFromActiveTab } from "@/lib/etsy-tab-client";
 import { useAuth } from "@/composables/useAuth";
+import { EOM_DISPLAY_NAME } from "@/lib/runtime-identity";
 
 type TabId = "order" | "image";
 

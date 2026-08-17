@@ -4,6 +4,10 @@ import ContentScriptWrapper from "@/components/ContentScriptWrapper.vue";
 import { emitAppLog } from "@/lib/app-log";
 import {
   ETSY_BRIDGE_EVENT_TYPE,
+  ETSY_MOVE_ORDERS_REQUEST_TYPE,
+  ETSY_MOVE_ORDERS_RESPONSE_TYPE,
+  ETSY_UPDATE_SHIP_BY_DATE_REQUEST_TYPE,
+  ETSY_UPDATE_SHIP_BY_DATE_RESPONSE_TYPE,
   type EtsyContextGetData,
 } from "@/lib/etsy-bridge-types";
 import { fetchEtsyImagesAsBase64 } from "@/lib/etsy-bridge-client";
@@ -39,6 +43,15 @@ import {
   appendShipByDateLog,
   formatChinaDateTimeFromUnixSeconds,
 } from "@/lib/kst-ship-by-date-sync-utils.mjs";
+import {
+  EOM_RUNTIME_CHANNEL,
+  getRuntimeScopedId,
+} from "@/lib/runtime-identity";
+
+const PAGE_INJECT_SCRIPT_ID = getRuntimeScopedId(
+  "injected-script-page-inject.js"
+);
+const CONTENT_ROOT_ID = getRuntimeScopedId("wxt-file-upload-widget");
 
 /** 将订单号数组格式化为简短预览，用于错误提示（最多展示前几条 + 等N条） */
 function formatOrderIdsPreview(
@@ -112,7 +125,7 @@ function injectScript(scriptPath: string): Promise<void> {
     }
 
     // 检查脚本是否已经注入（通过 DOM）
-    const scriptId = `injected-script-${scriptPath}`;
+    const scriptId = PAGE_INJECT_SCRIPT_ID;
     if (document.getElementById(scriptId)) {
       scriptInjectionState.pageInject.injected = true;
       const resolvedPromise = Promise.resolve();
@@ -124,7 +137,9 @@ function injectScript(scriptPath: string): Promise<void> {
     const injectionPromise = new Promise<void>((resolve, reject) => {
       const script = document.createElement("script");
       script.id = scriptId;
-      script.src = browser.runtime.getURL(scriptPath as any);
+      const scriptUrl = new URL(browser.runtime.getURL(scriptPath as any));
+      scriptUrl.searchParams.set("eom_channel", EOM_RUNTIME_CHANNEL);
+      script.src = scriptUrl.href;
       script.onload = function () {
         scriptInjectionState.pageInject.injected = true;
         resolve();
@@ -144,7 +159,7 @@ function injectScript(scriptPath: string): Promise<void> {
 
   // 其他脚本的注入逻辑（保持向后兼容）
   return new Promise((resolve, reject) => {
-    const scriptId = `injected-script-${scriptPath}`;
+    const scriptId = getRuntimeScopedId(`injected-script-${scriptPath}`);
     if (document.getElementById(scriptId)) {
       resolve();
       return;
@@ -681,13 +696,13 @@ export default defineContentScript({
         | undefined;
 
       const normalizedType =
-        data?.type === "etsy-move-orders-request"
+        data?.type === ETSY_MOVE_ORDERS_REQUEST_TYPE
           ? "moveOrders.requested"
-          : data?.type === "etsy-move-orders-response"
+          : data?.type === ETSY_MOVE_ORDERS_RESPONSE_TYPE
             ? "moveOrders.responded"
-            : data?.type === "etsy-update-ship-by-date-request"
+            : data?.type === ETSY_UPDATE_SHIP_BY_DATE_REQUEST_TYPE
               ? "updateShipByDate.requested"
-              : data?.type === "etsy-update-ship-by-date-response"
+              : data?.type === ETSY_UPDATE_SHIP_BY_DATE_RESPONSE_TYPE
                 ? "updateShipByDate.responded"
                 : data?.type === ETSY_BRIDGE_EVENT_TYPE
                   ? data.event
@@ -1102,10 +1117,10 @@ export default defineContentScript({
     const init = () => {
       if (document.body) {
         // 检查是否已经存在容器，避免重复注入
-        let container = document.getElementById("wxt-file-upload-widget");
+        let container = document.getElementById(CONTENT_ROOT_ID);
         if (!container) {
           container = document.createElement("div");
-          container.id = "wxt-file-upload-widget";
+          container.id = CONTENT_ROOT_ID;
           document.body.appendChild(container);
         }
 

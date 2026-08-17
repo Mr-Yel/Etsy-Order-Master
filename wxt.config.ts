@@ -76,18 +76,41 @@ function appLogConfigPlugin() {
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ["@wxt-dev/module-vue"],
+  zip: {
+    artifactTemplate: "{{name}}-{{version}}-{{browser}}-{{mode}}.zip",
+  },
   vite: () => ({
     plugins: [
       devTokenPlugin(),
       // appLogConfigPlugin(),
     ],
   }),
-  manifest: {
+  hooks: {
+    build: {
+      manifestGenerated(wxt, manifest) {
+        if (!manifest.action) return;
+        manifest.action.default_title =
+          wxt.config.mode === "test"
+            ? "Etsy Order Master (测试版)"
+            : "Etsy Order Master";
+      },
+    },
+  },
+  manifest: ({ mode }) => ({
+    name:
+      mode === "test"
+        ? "Etsy Order Master (测试版)"
+        : "Etsy Order Master",
+    description:
+      mode === "test"
+        ? "Etsy订单管理工具（测试环境）"
+        : "Etsy订单管理工具",
     // 权限配置
     permissions: ['storage', 'tabs'],
     host_permissions: [
       '*://*.etsy.com/*',
       'https://i.etsystatic.com/*',
+      'https://test.kesiteng.cn/*',
       'https://kstgl.kesiteng.cn/*',
       // 'https://huangxiangkun.uno/*',
     ],
@@ -104,5 +127,5 @@ export default defineConfig({
     content_security_policy: {
       extension_pages: "script-src 'self'; object-src 'self'; frame-src 'self'; child-src 'self'",
     },
-  },
+  }),
 });

@@ -5,8 +5,9 @@ import { getEtsyData } from "@/composables/useEtsyData";
 import { getOrderListBaseParams } from "@/composables/useFetchOrderList";
 import type { EtsyOrder } from "@/types/etsy-order";
 import { getUspsRemotePostalPrefix } from "@/lib/usps-remote-area-utils.mjs";
+import { getRuntimeScopedId } from "@/lib/runtime-identity";
 
-const BADGE_CLASS = "eom-usps-remote-badge";
+const BADGE_CLASS = getRuntimeScopedId("eom-usps-remote-badge");
 const ORDERS_SOLD_PATH = "/your/orders/sold";
 const ORDER_LINK_SELECTOR = 'a[href*="order_id="], a[href*="/orders/"]';
 const MAX_BATCH_SIZE = 50;
@@ -292,7 +293,8 @@ onUnmounted(() => {
 <template></template>
 
 <style>
-.eom-usps-remote-badge {
+.eom-usps-remote-badge,
+.eom-usps-remote-badge-test {
   position: absolute;
   right: 14px;
   bottom: 48px;
@@ -337,10 +339,20 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.eom-usps-remote-badge-test {
+  bottom: 96px;
+  border-color: #f59e0b;
+}
+
 @media (max-width: 900px) {
-  .eom-usps-remote-badge {
+  .eom-usps-remote-badge,
+  .eom-usps-remote-badge-test {
     right: 8px;
     bottom: 42px;
+  }
+
+  .eom-usps-remote-badge-test {
+    bottom: 86px;
   }
 }
 </style>

@@ -1,6 +1,25 @@
-export const ETSY_BRIDGE_REQUEST_TYPE = "ETSY_BRIDGE_REQUEST" as const;
-export const ETSY_BRIDGE_RESPONSE_TYPE = "ETSY_BRIDGE_RESPONSE" as const;
-export const ETSY_BRIDGE_EVENT_TYPE = "ETSY_BRIDGE_EVENT" as const;
+import { getRuntimeScopedMessageType } from "./runtime-identity";
+
+export const ETSY_BRIDGE_REQUEST_TYPE = getRuntimeScopedMessageType(
+  "ETSY_BRIDGE_REQUEST"
+);
+export const ETSY_BRIDGE_RESPONSE_TYPE = getRuntimeScopedMessageType(
+  "ETSY_BRIDGE_RESPONSE"
+);
+export const ETSY_BRIDGE_EVENT_TYPE = getRuntimeScopedMessageType(
+  "ETSY_BRIDGE_EVENT"
+);
+
+export const ETSY_MOVE_ORDERS_REQUEST_TYPE = getRuntimeScopedMessageType(
+  "etsy-move-orders-request"
+);
+export const ETSY_MOVE_ORDERS_RESPONSE_TYPE = getRuntimeScopedMessageType(
+  "etsy-move-orders-response"
+);
+export const ETSY_UPDATE_SHIP_BY_DATE_REQUEST_TYPE =
+  getRuntimeScopedMessageType("etsy-update-ship-by-date-request");
+export const ETSY_UPDATE_SHIP_BY_DATE_RESPONSE_TYPE =
+  getRuntimeScopedMessageType("etsy-update-ship-by-date-response");
 
 export const ETSY_BRIDGE_VERSION = 1 as const;
 
