@@ -338,3 +338,48 @@ export async function fetchEtsyOrdersImportWithArtworkViaProxy(
   }
   return data;
 }
+
+/** Etsy 图包上传接口参数 */
+export type EtsyArtworkPackageUploadParams = {
+  file: File;
+  shopId: string | number;
+  packageRootPath?: string;
+  platformOrderIds?: string;
+  requestId?: string;
+};
+
+export type EtsyArtworkPackageUploadResponse = {
+  code: number;
+  msg: string;
+  data?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export const ETSY_ARTWORK_PACKAGES_UPLOAD_PATH =
+  "/system/platform-orders/etsy/artwork-packages/upload";
+
+/** 通过统一 KST 认证代理上传 Etsy 图包 */
+export async function uploadEtsyArtworkPackageViaProxy(
+  params: EtsyArtworkPackageUploadParams
+): Promise<EtsyArtworkPackageUploadResponse> {
+  const base64 = await fileToBase64(params.file);
+  const formFields: Record<string, string> = {
+    shopId: String(params.shopId),
+    requestId: params.requestId ?? crypto.randomUUID(),
+  };
+  if (params.packageRootPath) formFields.packageRootPath = params.packageRootPath;
+  if (params.platformOrderIds) formFields.platformOrderIds = params.platformOrderIds;
+  const data = await kstAuthenticatedRequest<EtsyArtworkPackageUploadResponse>({
+    path: ETSY_ARTWORK_PACKAGES_UPLOAD_PATH,
+    method: "POST",
+    formFile: {
+      base64,
+      fileName: params.file.name,
+      mimeType: params.file.type || "application/zip",
+      fieldName: "zip",
+    },
+    formFields,
+  });
+  if (data?.code !== 200) throw new Error(data?.msg ?? "图包上传失败");
+  return data;
+}

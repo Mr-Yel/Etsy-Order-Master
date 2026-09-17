@@ -36,7 +36,7 @@ export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unk
     const formData = new FormData();
     const binary = Uint8Array.from(atob(formFile.base64), (c) => c.charCodeAt(0));
     const blob = new Blob([binary], { type: formFile.mimeType ?? "application/octet-stream" });
-    formData.append("file", blob, formFile.fileName);
+    formData.append(formFile.fieldName ?? "file", blob, formFile.fileName);
     for (const [k, v] of Object.entries(formFields)) {
       formData.append(k, v);
     }

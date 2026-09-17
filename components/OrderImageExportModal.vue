@@ -14,6 +14,7 @@ import {
   type EtsyOrderPersonalizationFile,
 } from "@/api/etsy-orders";
 import { fetchEtsyImagesAsBase64 } from "@/lib/etsy-bridge-client";
+import { uploadEtsyArtworkPackageViaProxy } from "@/api";
 import { runLimitedJobs } from "@/lib/limited-jobs.mjs";
 import type { EtsyOrder, EtsyOrderTransaction } from "@/types/etsy-order";
 import { getUploadedPhotoCount, isPhotoVariation } from "@/types/etsy-order";
@@ -55,6 +56,7 @@ const LARGE_EXPORT_IMAGE_COUNT = 200;
 
 const loading = ref(true);
 const downloading = ref(false);
+const syncing = ref(false);
 const error = ref<string | null>(null);
 const exportNotice = ref<string | null>(null);
 const downloadStage = ref("");
@@ -429,9 +431,9 @@ function buildFailedImageReport(failures: ImageDownloadFailure[]): string {
     .join("\n\n");
 }
 
-async function downloadSelected() {
+async function downloadSelected(saveToDisk = true): Promise<Blob | null> {
   const data = selectedRows.value;
-  if (data.length === 0 || downloading.value) return;
+  if (data.length === 0 || downloading.value) return null;
 
   downloading.value = true;
   error.value = null;
@@ -485,7 +487,7 @@ async function downloadSelected() {
         `本次将下载 ${imageJobs.length} 张图片，可能耗时较久。建议订单很多时分批导出。是否继续？`
       )
     ) {
-      return;
+      return null;
     }
 
     const failedDownloads: ImageDownloadFailure[] = [];
@@ -541,22 +543,48 @@ async function downloadSelected() {
     downloadStage.value = "生成 ZIP...";
     const blob = await zip.generateAsync({ type: "blob" });
     downloadStage.value = "保存文件...";
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `order-images-${new Date().toISOString().slice(0, 10)}.zip`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    if (saveToDisk) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `order-images-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
     exportNotice.value =
       failedDownloads.length > 0
         ? `已导出，${failedDownloads.length} 张图片失败，详情见 ZIP 内 下载失败.txt`
         : "导出完成";
+    return blob;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "订单图片导出失败";
+    return null;
   } finally {
     downloading.value = false;
     downloadStage.value = "";
     downloadCompleted.value = 0;
     downloadTotal.value = 0;
+  }
+}
+
+async function syncArtworkPackage() {
+  if (selectedRows.value.length === 0 || downloading.value || syncing.value) return;
+  syncing.value = true;
+  try {
+    const blob = await downloadSelected(false);
+    if (!blob) return;
+    const etsy = await getEtsyData();
+    if (!etsy.shopId) throw new Error("无法获取店铺 ID");
+    const file = new File(
+      [blob],
+      `order-images-${new Date().toISOString().slice(0, 10)}.zip`,
+      { type: "application/zip" }
+    );
+    await uploadEtsyArtworkPackageViaProxy({ shopId: etsy.shopId, file });
+    exportNotice.value = "图包已同步到共享盘";
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "图包同步失败";
+  } finally {
+    syncing.value = false;
   }
 }
 
@@ -576,7 +604,7 @@ onMounted(() => {
             <select
               v-model.number="selectedOrderStateId"
               class="state-select"
-              :disabled="loading || downloading"
+              :disabled="loading || downloading || syncing"
               @change="fetchOrders"
             >
               <option
@@ -596,7 +624,7 @@ onMounted(() => {
               min="1"
               max="999"
               class="page-size-input"
-              :disabled="loading || downloading"
+              :disabled="loading || downloading || syncing"
               @change="fetchOrders"
             />
           </label>
@@ -777,14 +805,24 @@ onMounted(() => {
             {{ exportNotice }}
           </span>
         </div>
-        <button
-          type="button"
-          class="btn-export"
-          :disabled="loading || downloading || selectedRows.length === 0"
-          @click="downloadSelected"
-        >
-          {{ downloadButtonText }}
-        </button>
+        <div class="footer-actions">
+          <button
+            type="button"
+            class="btn-sync"
+            :disabled="loading || downloading || syncing || selectedRows.length === 0"
+            @click="syncArtworkPackage"
+          >
+            {{ syncing ? "同步中..." : "同步图包到共享盘" }}
+          </button>
+          <button
+            type="button"
+            class="btn-export"
+            :disabled="loading || downloading || syncing || selectedRows.length === 0"
+            @click="() => downloadSelected()"
+          >
+            {{ downloadButtonText }}
+          </button>
+        </div>
       </div>
     </div>
     <img
@@ -907,7 +945,8 @@ onMounted(() => {
 }
 
 .btn-retry,
-.btn-export {
+.btn-export,
+.btn-sync {
   padding: 9px 16px;
   font-size: 14px;
   font-weight: 500;
@@ -919,11 +958,13 @@ onMounted(() => {
 }
 
 .btn-retry:hover,
-.btn-export:hover:not(:disabled) {
+.btn-export:hover:not(:disabled),
+.btn-sync:hover:not(:disabled) {
   background: #2563eb;
 }
 
-.btn-export:disabled {
+.btn-export:disabled,
+.btn-sync:disabled {
   background: #9ca3af;
   cursor: not-allowed;
 }
@@ -1170,6 +1211,13 @@ onMounted(() => {
   gap: 10px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .export-notice {

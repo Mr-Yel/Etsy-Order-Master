@@ -10,6 +10,8 @@ export type KstProxyFormFile = {
   base64: string;
   fileName: string;
   mimeType?: string;
+  /** multipart 字段名，默认 file */
+  fieldName?: string;
 };
 
 /** 代理请求：path 为相对路径，如 /system/platform-orders/list */
