@@ -1,4 +1,5 @@
 import { kstAuthenticatedRequest } from "@/lib/kst-request";
+import { buildArtworkImportFormFields } from "@/lib/kst-artwork-import-utils.mjs";
 import { KST_BASE_URL } from "./constants";
 
 /** 平台订单列表请求参数（三个入参） */
@@ -239,41 +240,45 @@ export async function updatePlatformOrderShipByDateViaProxy(
   return data;
 }
 
-/** 平台订单导入 JSON/Excel 请求参数 */
-export type PlatformOrdersImportJsonParams = {
+/** Etsy 作图订单导入请求参数 */
+export type EtsyOrdersImportWithArtworkParams = {
   file: File;
   shopId: string;
-  platformType: string;
   ownerUserId?: number;
+  // platformType 暂不传给作图导入接口。
+  // forceReimport 固定为 true，不开放给调用方修改。
+  // artworkRequestId 由请求层通过 crypto.randomUUID() 自动生成。
+  // packageRootPath 固定为“待导入图包”，不开放给调用方修改。
 };
 
-/** 平台订单导入接口响应（与列表接口一致：code、msg） */
-export type PlatformOrdersImportJsonResponse = {
+/** Etsy 作图订单导入接口响应（与列表接口一致：code、msg） */
+export type EtsyOrdersImportWithArtworkResponse = {
   code: number;
   msg: string;
   [key: string]: unknown;
 };
 
-/** 平台订单导入接口 path */
-export const PLATFORM_ORDERS_IMPORT_JSON_PATH = "/system/platform-orders/import-json";
+/** Etsy 作图订单导入接口 path */
+export const ETSY_ORDERS_IMPORT_WITH_ARTWORK_PATH =
+  "/system/platform-orders/etsy/import-with-artwork";
 
 /**
- * 直接调用 KST 平台订单导入接口（multipart/form-data：file、shopId、platformType）
+ * 直接调用 KST Etsy 作图订单导入接口
  * 仅在无 CORS 限制的环境使用（如 background / 同源页）
  */
-export async function fetchPlatformOrdersImportJson(
-  params: PlatformOrdersImportJsonParams,
+export async function fetchEtsyOrdersImportWithArtwork(
+  params: EtsyOrdersImportWithArtworkParams,
   token: string
-): Promise<PlatformOrdersImportJsonResponse> {
+): Promise<EtsyOrdersImportWithArtworkResponse> {
   const formData = new FormData();
   formData.append("file", params.file, params.file.name);
-  formData.append("shopId", params.shopId);
-  formData.append("platformType", params.platformType);
-  if (typeof params.ownerUserId === "number" && Number.isFinite(params.ownerUserId)) {
-    formData.append("ownerUserId", String(params.ownerUserId));
+  for (const [key, value] of Object.entries(
+    buildArtworkImportFormFields(params)
+  )) {
+    formData.append(key, value);
   }
 
-  const url = `${PLATFORM_ORDERS_BASE}${PLATFORM_ORDERS_IMPORT_JSON_PATH}`;
+  const url = `${PLATFORM_ORDERS_BASE}${ETSY_ORDERS_IMPORT_WITH_ARTWORK_PATH}`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -283,7 +288,7 @@ export async function fetchPlatformOrdersImportJson(
     body: formData,
     credentials: "include",
   });
-  const data = (await res.json()) as PlatformOrdersImportJsonResponse;
+  const data = (await res.json()) as EtsyOrdersImportWithArtworkResponse;
   if (data?.code !== 200) {
     const msg = data?.msg ?? `请求失败: ${res.status} ${res.statusText}`;
     throw new Error(msg);
@@ -306,29 +311,27 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 /**
- * 通过 background 代理调用 KST 平台订单导入接口（用于 content script 等易触发 CORS 的环境）
+ * 通过 background 代理调用 KST Etsy 作图订单导入接口
+ * （用于 content script 等易触发 CORS 的环境）
  * token 由统一请求层自动注入，401 时由 proxy 层统一处理
  */
-export async function fetchPlatformOrdersImportJsonViaProxy(
-  params: PlatformOrdersImportJsonParams
-): Promise<PlatformOrdersImportJsonResponse> {
+export async function fetchEtsyOrdersImportWithArtworkViaProxy(
+  params: EtsyOrdersImportWithArtworkParams
+): Promise<EtsyOrdersImportWithArtworkResponse> {
   const base64 = await fileToBase64(params.file);
-  const data = await kstAuthenticatedRequest<PlatformOrdersImportJsonResponse>({
-    path: PLATFORM_ORDERS_IMPORT_JSON_PATH,
-    method: "POST",
-    formFile: {
-      base64,
-      fileName: params.file.name,
-      mimeType: params.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    },
-    formFields: {
-      shopId: params.shopId,
-      platformType: params.platformType,
-      ...(typeof params.ownerUserId === "number" && Number.isFinite(params.ownerUserId)
-        ? { ownerUserId: String(params.ownerUserId) }
-        : {}),
-    },
-  });
+  const data =
+    await kstAuthenticatedRequest<EtsyOrdersImportWithArtworkResponse>({
+      path: ETSY_ORDERS_IMPORT_WITH_ARTWORK_PATH,
+      method: "POST",
+      formFile: {
+        base64,
+        fileName: params.file.name,
+        mimeType:
+          params.file.type ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+      formFields: buildArtworkImportFormFields(params),
+    });
   if (data?.code !== 200) {
     const msg = data?.msg ?? "请求失败";
     throw new Error(msg);

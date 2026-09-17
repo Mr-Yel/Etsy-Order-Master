@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { fetchPlatformOrdersImportJsonViaProxy } from "@/api";
+import { fetchEtsyOrdersImportWithArtworkViaProxy } from "@/api";
 import { emitAppLog } from "@/lib/app-log";
 import { getToken } from "@/lib/auth-manager";
 import { resolveOwnerUserIdForShop } from "@/lib/kst-shop-owner";
@@ -286,10 +286,9 @@ export const syncOrdersToKst = async ({
       orderIdsToImportCount: orderIdsToImport.length,
       orderIdsToImportPreview: orderIdsToImport.slice(0, 10).join(","),
     });
-    const res = await fetchPlatformOrdersImportJsonViaProxy({
+    const res = await fetchEtsyOrdersImportWithArtworkViaProxy({
       file,
       shopId: String(shopId),
-      platformType,
       ownerUserId,
     });
     traceLog("kst.syncOrdersToKst.import-response", {

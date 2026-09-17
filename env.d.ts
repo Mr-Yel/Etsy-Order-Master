@@ -11,6 +11,17 @@ interface ImportMetaEnv {
   readonly VITE_EOM_APP_LOG_CLIENT_SECRET?: string;
 }
 
+declare module "@/lib/kst-artwork-import-utils.mjs" {
+  export const ARTWORK_PACKAGE_ROOT_PATH: "待导入图包";
+  export function buildArtworkImportFormFields(
+    params: {
+      shopId: string | number;
+      ownerUserId?: number;
+    },
+    createRequestId?: () => string
+  ): Record<string, string>;
+}
+
 declare module "@/lib/kst-ship-by-date-sync-utils.mjs" {
   export function formatChinaDateTimeFromUnixSeconds(seconds: number): string;
   export function appendShipByDateLog(options: {
