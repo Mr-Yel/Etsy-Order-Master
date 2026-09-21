@@ -12,14 +12,24 @@ interface ImportMetaEnv {
 }
 
 declare module "@/lib/kst-artwork-import-utils.mjs" {
-  export const ARTWORK_PACKAGE_ROOT_PATH: "待导入图包";
-  export function buildArtworkImportFormFields(
-    params: {
-      shopId: string | number;
-      ownerUserId?: number;
-    },
-    createRequestId?: () => string
-  ): Record<string, string>;
+  export function buildArtworkImportFormFields(params: {
+    shopId: string | number;
+    ownerUserId?: number;
+  }): Record<string, string>;
+}
+
+declare module "@/lib/kst-artwork-package-utils.mjs" {
+  export type EtsyArtworkPackageOrderItem = {
+    sku: string;
+    quantity: number;
+  };
+  export type EtsyArtworkPackageOrder = {
+    platform_order_id: string;
+    order_items: EtsyArtworkPackageOrderItem[];
+  };
+  export function buildEtsyArtworkPackageOrdersJson(
+    rows: Array<{ orderId?: string | number; sku?: string }>
+  ): EtsyArtworkPackageOrder[];
 }
 
 declare module "@/lib/kst-ship-by-date-sync-utils.mjs" {

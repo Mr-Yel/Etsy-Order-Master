@@ -245,10 +245,6 @@ export type EtsyOrdersImportWithArtworkParams = {
   file: File;
   shopId: string;
   ownerUserId?: number;
-  // platformType 暂不传给作图导入接口。
-  // forceReimport 固定为 true，不开放给调用方修改。
-  // artworkRequestId 由请求层通过 crypto.randomUUID() 自动生成。
-  // packageRootPath 固定为“待导入图包”，不开放给调用方修改。
 };
 
 /** Etsy 作图订单导入接口响应（与列表接口一致：code、msg） */
@@ -339,13 +335,25 @@ export async function fetchEtsyOrdersImportWithArtworkViaProxy(
   return data;
 }
 
+export type EtsyArtworkPackageOrderItem = {
+  sku: string;
+  quantity?: number;
+};
+
+export type EtsyArtworkPackageOrder = {
+  platform_order_id: string;
+  order_items: EtsyArtworkPackageOrderItem[];
+};
+
 /** Etsy 图包上传接口参数 */
 export type EtsyArtworkPackageUploadParams = {
   file: File;
   shopId: string | number;
+  requestId?: string;
   packageRootPath?: string;
   platformOrderIds?: string;
-  requestId?: string;
+  ordersJson?: EtsyArtworkPackageOrder[] | { order_list: EtsyArtworkPackageOrder[] };
+  artworkRequestId?: string;
 };
 
 export type EtsyArtworkPackageUploadResponse = {
@@ -369,6 +377,8 @@ export async function uploadEtsyArtworkPackageViaProxy(
   };
   if (params.packageRootPath) formFields.packageRootPath = params.packageRootPath;
   if (params.platformOrderIds) formFields.platformOrderIds = params.platformOrderIds;
+  if (params.ordersJson) formFields.ordersJson = JSON.stringify(params.ordersJson);
+  if (params.artworkRequestId) formFields.artworkRequestId = params.artworkRequestId;
   const data = await kstAuthenticatedRequest<EtsyArtworkPackageUploadResponse>({
     path: ETSY_ARTWORK_PACKAGES_UPLOAD_PATH,
     method: "POST",

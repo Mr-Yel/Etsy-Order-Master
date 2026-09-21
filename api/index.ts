@@ -27,6 +27,8 @@ export {
   type EtsyOrdersImportWithArtworkResponse,
   type EtsyArtworkPackageUploadParams,
   type EtsyArtworkPackageUploadResponse,
+  type EtsyArtworkPackageOrder,
+  type EtsyArtworkPackageOrderItem,
   type PlatformOrder,
   type PlatformOrderItem,
   type PlatformOrderItemProduct,

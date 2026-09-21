@@ -15,6 +15,7 @@ import {
 } from "@/api/etsy-orders";
 import { fetchEtsyImagesAsBase64 } from "@/lib/etsy-bridge-client";
 import { uploadEtsyArtworkPackageViaProxy } from "@/api";
+import { buildEtsyArtworkPackageOrdersJson } from "@/lib/kst-artwork-package-utils.mjs";
 import { runLimitedJobs } from "@/lib/limited-jobs.mjs";
 import type { EtsyOrder, EtsyOrderTransaction } from "@/types/etsy-order";
 import { getUploadedPhotoCount, isPhotoVariation } from "@/types/etsy-order";
@@ -579,7 +580,11 @@ async function syncArtworkPackage() {
       `order-images-${new Date().toISOString().slice(0, 10)}.zip`,
       { type: "application/zip" }
     );
-    await uploadEtsyArtworkPackageViaProxy({ shopId: etsy.shopId, file });
+    await uploadEtsyArtworkPackageViaProxy({
+      shopId: etsy.shopId,
+      file,
+      ordersJson: buildEtsyArtworkPackageOrdersJson(selectedRows.value),
+    });
     exportNotice.value = "图包已同步到共享盘";
   } catch (err) {
     error.value = err instanceof Error ? err.message : "图包同步失败";
