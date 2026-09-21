@@ -17,6 +17,9 @@ web-ext.config.ts
 # 本地免登录 token（仅开发环境使用，勿提交）
 dev-token.txt
 
+# Reasonix 本地配置
+reasonix.toml
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
