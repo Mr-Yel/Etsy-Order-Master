@@ -3,7 +3,27 @@
  * 仅在 background 中 import 使用，在此发起请求无 CORS 限制
  */
 import { KST_BASE_URL } from "@/api/constants";
-import type { KstProxyRequest } from "./kst-proxy-types";
+import type { KstProxyFormFile, KstProxyRequest } from "./kst-proxy-types";
+
+function decodeBase64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function formFileToBlob(formFile: KstProxyFormFile): Promise<Blob> {
+  if (formFile.blob != null) return formFile.blob;
+  if (typeof formFile.base64 === "string" && formFile.base64.length > 0) {
+    const bytes = decodeBase64ToBytes(formFile.base64);
+    return new Blob([bytes], {
+      type: formFile.mimeType ?? "application/octet-stream",
+    });
+  }
+  throw new Error("缺少上传文件内容");
+}
 
 /**
  * 在 background 上下文中请求 KST 接口
@@ -32,12 +52,11 @@ export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unk
     headers,
   };
 
-  if (formFile != null && formFields != null) {
+  if (formFile != null) {
     const formData = new FormData();
-    const binary = Uint8Array.from(atob(formFile.base64), (c) => c.charCodeAt(0));
-    const blob = new Blob([binary], { type: formFile.mimeType ?? "application/octet-stream" });
+    const blob = await formFileToBlob(formFile);
     formData.append(formFile.fieldName ?? "file", blob, formFile.fileName);
-    for (const [k, v] of Object.entries(formFields)) {
+    for (const [k, v] of Object.entries(formFields ?? {})) {
       formData.append(k, v);
     }
     init.body = formData;

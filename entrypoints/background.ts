@@ -11,6 +11,7 @@ import {
   KST_PROXY_MESSAGE_TYPE,
   type KstProxyRequest,
 } from "@/lib/kst-proxy-types";
+import { handleKstProxyPortConnection } from "@/lib/kst-proxy-port";
 import { runKstProxyInBackground } from "@/lib/kst-proxy";
 import { openLoginPage, handle401 } from "@/lib/auth-manager";
 import {
@@ -249,5 +250,24 @@ export default defineBackground(() => {
       return false;
     }
   );
+
+  browser.runtime.onConnect.addListener((port) => {
+    handleKstProxyPortConnection(port, {
+      async onUnauthorized(body) {
+        console.log("[KST] 检测到 401，执行 handle401");
+        const result = await handle401();
+        console.log("[KST] handle401 结果", {
+          autoLoggedIn: result.autoLoggedIn,
+          errorMessage: result.errorMessage,
+        });
+        return {
+          success: false,
+          error: result.errorMessage ?? body?.msg ?? "登录已过期",
+          code: 401,
+          autoLoggedIn: result.autoLoggedIn,
+        };
+      },
+    });
+  });
 });
 

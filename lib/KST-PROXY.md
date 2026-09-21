@@ -8,8 +8,10 @@
 |------|------|
 | `lib/kst-proxy-types.ts` | 消息类型常量与请求/响应类型，供 background 与调用端共用 |
 | `lib/kst-proxy.ts` | **仅 background 使用**：根据 path/query/body/token 请求 KST，返回 JSON |
-| `lib/kst-proxy-client.ts` | 调用端使用：`sendKstProxyRequest(req)` 通过 `runtime.sendMessage` 交给 background 执行 |
-| `entrypoints/background.ts` | 监听 `KST_PROXY` 消息，调用 `runKstProxyInBackground` 并 `sendResponse` |
+| `lib/kst-proxy-client.ts` | 调用端使用：`sendKstProxyRequest(req)`。小请求走 `runtime.sendMessage`，带 `formFile.blob` / 过大文件走 Port 分片 |
+| `lib/kst-proxy-transfer.mjs` | 大文件分片协议（切分 / 组装），可单测 |
+| `lib/kst-proxy-port.ts` | Port 传输：content 分片发送，background 拼包后仍走 `runKstProxyInBackground` |
+| `entrypoints/background.ts` | 监听 `KST_PROXY` 消息和 `KST_PROXY_PORT` 连接 |
 
 ## 扩展新接口
 
@@ -49,6 +51,8 @@ export async function fetchPlatformOrdersListViaProxy(params, token) {
 - `method`: 可选，默认 `"GET"`
 - `query`: 可选，GET 时拼到 URL
 - `body`: 可选，POST/PUT 时 JSON 序列化
+- `formFile`: 可选，multipart 文件。小文件可传 `base64`；大文件传 `blob`，由 proxy 走 Port 分片，避免 `sendMessage` 64MB 限制
+- `formFields`: 可选，multipart 其余字段
 - `token`: 必填，Bearer token
 
-调用方（content / popup / options）使用 `fetchXxxViaProxy` 或直接 `sendKstProxyRequest(req)` 即可，新接口只需在 `api/` 下按上面模式加一层封装。
+调用方（content / popup / options）使用 `fetchXxxViaProxy` 或直接 `sendKstProxyRequest(req)` 即可，新接口只需在 `api/` 下按上面模式加一层封装。大文件不要先转整包 base64 再塞进 `sendMessage`。

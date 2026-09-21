@@ -370,7 +370,6 @@ export const ETSY_ARTWORK_PACKAGES_UPLOAD_PATH =
 export async function uploadEtsyArtworkPackageViaProxy(
   params: EtsyArtworkPackageUploadParams
 ): Promise<EtsyArtworkPackageUploadResponse> {
-  const base64 = await fileToBase64(params.file);
   const formFields: Record<string, string> = {
     shopId: String(params.shopId),
     requestId: params.requestId ?? crypto.randomUUID(),
@@ -383,7 +382,7 @@ export async function uploadEtsyArtworkPackageViaProxy(
     path: ETSY_ARTWORK_PACKAGES_UPLOAD_PATH,
     method: "POST",
     formFile: {
-      base64,
+      blob: params.file,
       fileName: params.file.name,
       mimeType: params.file.type || "application/zip",
       fieldName: "zip",
