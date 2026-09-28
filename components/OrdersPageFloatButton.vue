@@ -32,13 +32,28 @@ const closeImageExportModal = () => {
 
 const TOOLBAR_SELECTOR =
   ".wt-mt-xs-2.wt-ml-xs-2.wt-mr-xs-2.wt-mt-md-3.wt-mm-md-3.wt-ml-md-0.wt-mr-md-0";
+const CONTAINER_ID = getRuntimeScopedId("etsy-order-master-export-btn-container");
 
-const MAX_WAIT_MS = 15000; // 最多等待 15 秒
+function findToolbar(): HTMLDivElement | null {
+  return document.querySelector<HTMLDivElement>(TOOLBAR_SELECTOR);
+}
 
-function attachToToolbar(toolbar: HTMLDivElement) {
-  if (injectedContainer) return;
+function ensureAttached() {
+  const toolbar = findToolbar();
+  if (!toolbar) return;
+
+  if (injectedContainer?.isConnected && toolbar.contains(injectedContainer)) {
+    return;
+  }
+
+  const leftover = document.getElementById(CONTAINER_ID);
+  if (leftover && leftover !== injectedContainer) {
+    leftover.remove();
+  }
+  injectedContainer?.remove();
+
   const container = document.createElement("div");
-  container.id = getRuntimeScopedId("etsy-order-master-export-btn-container");
+  container.id = CONTAINER_ID;
   container.className = "dropdown-group etsy-order-master-export-group";
   toolbar.appendChild(container);
   injectedContainer = container;
@@ -46,58 +61,47 @@ function attachToToolbar(toolbar: HTMLDivElement) {
 }
 
 let observer: MutationObserver | null = null;
-let waitTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let attachTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleAttach() {
+  if (attachTimer != null) clearTimeout(attachTimer);
+  attachTimer = setTimeout(() => {
+    attachTimer = null;
+    ensureAttached();
+  }, 80);
+}
+
+function onTabBecameVisible() {
+  if (document.visibilityState === "visible") {
+    ensureAttached();
+  }
+}
 
 onMounted(() => {
   void ensureSession();
+  ensureAttached();
 
-  const toolbar = document.querySelector<HTMLDivElement>(TOOLBAR_SELECTOR);
-
-  if (toolbar) {
-    attachToToolbar(toolbar);
-    return;
-  }
-
-  // 工具栏由 Etsy 异步渲染，在 DOMContentLoaded 时尚未出现，用 MutationObserver 等待
-  const tryFindAndAttach = () => {
-    const el = document.querySelector<HTMLDivElement>(TOOLBAR_SELECTOR);
-    if (el) {
-      attachToToolbar(el);
-      if (observer) {
-        observer.disconnect();
-        observer = null;
-      }
-      if (waitTimeoutId != null) {
-        clearTimeout(waitTimeoutId);
-        waitTimeoutId = null;
-      }
-    }
-  };
-
-  observer = new MutationObserver(tryFindAndAttach);
+  observer = new MutationObserver(scheduleAttach);
   observer.observe(document.body, { childList: true, subtree: true });
 
-  waitTimeoutId = setTimeout(() => {
-    waitTimeoutId = null;
-    if (observer) {
-      observer.disconnect();
-      observer = null;
-    }
-  }, MAX_WAIT_MS);
+  document.addEventListener("visibilitychange", onTabBecameVisible);
+  window.addEventListener("pageshow", ensureAttached);
+  window.addEventListener("focus", ensureAttached);
 });
 
 onUnmounted(() => {
-  if (waitTimeoutId != null) {
-    clearTimeout(waitTimeoutId);
-    waitTimeoutId = null;
+  if (attachTimer != null) {
+    clearTimeout(attachTimer);
+    attachTimer = null;
   }
   if (observer) {
     observer.disconnect();
     observer = null;
   }
-  if (injectedContainer && injectedContainer.parentNode) {
-    injectedContainer.parentNode.removeChild(injectedContainer);
-  }
+  document.removeEventListener("visibilitychange", onTabBecameVisible);
+  window.removeEventListener("pageshow", ensureAttached);
+  window.removeEventListener("focus", ensureAttached);
+  injectedContainer?.remove();
   injectedContainer = null;
   targetEl.value = null;
 });

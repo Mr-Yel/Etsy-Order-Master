@@ -7,6 +7,8 @@ import UspsRemoteAreaBadges from "./UspsRemoteAreaBadges.vue";
 const shouldShowWidget = ref(false);
 const shouldShowOrdersPageButton = ref(false);
 let observer: MutationObserver | null = null;
+let originalPushState: History["pushState"] | null = null;
+let originalReplaceState: History["replaceState"] | null = null;
 
 const ORDERS_SOLD_PATH = "/your/orders/sold";
 
@@ -26,21 +28,35 @@ const checkOrdersPage = () => {
   shouldShowOrdersPageButton.value = isOrdersSoldUrl || hasOrdersPageClass;
 };
 
-onMounted(() => {
+const refreshPageFlags = () => {
   checkElement();
   checkOrdersPage();
+};
 
-  observer = new MutationObserver(() => {
-    checkElement();
-    checkOrdersPage();
-  });
+onMounted(() => {
+  refreshPageFlags();
 
+  observer = new MutationObserver(refreshPageFlags);
   observer.observe(document.body, {
     childList: true,
     subtree: true,
   });
 
-  window.addEventListener("popstate", checkOrdersPage);
+  window.addEventListener("popstate", refreshPageFlags);
+  document.addEventListener("visibilitychange", refreshPageFlags);
+
+  originalPushState = history.pushState;
+  originalReplaceState = history.replaceState;
+  history.pushState = function (...args) {
+    const result = originalPushState!.apply(this, args);
+    refreshPageFlags();
+    return result;
+  };
+  history.replaceState = function (...args) {
+    const result = originalReplaceState!.apply(this, args);
+    refreshPageFlags();
+    return result;
+  };
 });
 
 onUnmounted(() => {
@@ -48,7 +64,12 @@ onUnmounted(() => {
     observer.disconnect();
     observer = null;
   }
-  window.removeEventListener("popstate", checkOrdersPage);
+  window.removeEventListener("popstate", refreshPageFlags);
+  document.removeEventListener("visibilitychange", refreshPageFlags);
+  if (originalPushState) history.pushState = originalPushState;
+  if (originalReplaceState) history.replaceState = originalReplaceState;
+  originalPushState = null;
+  originalReplaceState = null;
 });
 </script>
 
