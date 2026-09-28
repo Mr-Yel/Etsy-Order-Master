@@ -302,6 +302,19 @@ function close() {
   emit("close");
 }
 
+let overlayMouseDownOnSelf = false;
+
+function onOverlayMouseDown(event: MouseEvent) {
+  overlayMouseDownOnSelf = event.target === event.currentTarget;
+}
+
+function onOverlayClick(event: MouseEvent) {
+  if (overlayMouseDownOnSelf && event.target === event.currentTarget) {
+    close();
+  }
+  overlayMouseDownOnSelf = false;
+}
+
 
 onMounted(() => {
   fetchOrders();
@@ -309,7 +322,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="close">
+  <div
+    class="modal-overlay"
+    @mousedown="onOverlayMouseDown"
+    @click="onOverlayClick"
+  >
     <div class="modal">
       <div class="modal-header">
         <div class="modal-header-left">
@@ -353,7 +370,7 @@ onMounted(() => {
               </option>
             </select>
           </label>
-          <form class="search-wrap" @submit.prevent="applySearch">
+          <div class="search-wrap">
             <label class="search-label" for="order-search-input">订单号</label>
             <input
               id="order-search-input"
@@ -363,12 +380,17 @@ onMounted(() => {
               class="search-input"
               placeholder="输入订单号"
               :disabled="loading"
-              @change="applySearch"
+              @keydown.enter.prevent="applySearch"
             />
-            <button type="submit" class="btn-search" :disabled="loading">
+            <button
+              type="button"
+              class="btn-search"
+              :disabled="loading"
+              @click="applySearch"
+            >
               搜索
             </button>
-          </form>
+          </div>
           <div class="pagination-wrap">
             <button
               type="button"
@@ -502,10 +524,11 @@ onMounted(() => {
 .modal {
   background: #fff;
   border-radius: 12px;
-  max-width: 95vw;
-  max-height: 90vh;
+  width: 95vw;
+  height: 90vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
 }
 
@@ -513,6 +536,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   padding: 16px 20px;
   border-bottom: 1px solid #e5e7eb;
 }
@@ -680,6 +704,7 @@ onMounted(() => {
 
 .modal-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 16px 20px;
 }
@@ -687,6 +712,11 @@ onMounted(() => {
 .loading,
 .error,
 .empty {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   padding: 40px 20px;
   color: #6b7280;
@@ -740,6 +770,9 @@ onMounted(() => {
 }
 
 .table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   font-weight: 600;
   color: #374151;
   background: #f9fafb;
@@ -762,6 +795,7 @@ onMounted(() => {
 }
 
 .modal-footer {
+  flex-shrink: 0;
   padding: 12px 20px;
   border-top: 1px solid #e5e7eb;
   display: flex;
