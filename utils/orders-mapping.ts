@@ -50,7 +50,7 @@ export const EXPORT_COLUMNS = [
   "InPerson Location",
   "SKU",
   "Item Name",
-  "Item Image",
+  "Thumbnail URL",
 ] as const;
 
 export type ExportTableRow = Record<(typeof EXPORT_COLUMNS)[number], string>;
@@ -190,7 +190,7 @@ export function mapOrdersToTableRows(
         "InPerson Location": "",
         SKU: safeStr(transaction.product?.product_identifier),
         "Item Name": safeStr(transaction.product?.title),
-        "Item Image": safeStr(transaction.product?.image_url_75x75),
+        "Thumbnail URL": safeStr(transaction.product?.image_url_75x75),
       };
     });
   });
