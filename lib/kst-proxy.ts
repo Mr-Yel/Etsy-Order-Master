@@ -31,10 +31,11 @@ async function formFileToBlob(formFile: KstProxyFormFile): Promise<Blob> {
  * @returns 接口返回的 JSON（未做 code 校验，由调用方按业务处理）
  */
 export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unknown> {
-  const { path, method = "GET", headers: customHeaders, query, body, formFile, formFields, token } = req;
+  const { path, baseUrl, method = "GET", headers: customHeaders, query, body, formFile, formFields, token } = req;
 
   const pathNormalized = path.startsWith("/") ? path : `/${path}`;
-  let url = `${KST_BASE_URL.replace(/\/$/, "")}${pathNormalized}`;
+  const base = (baseUrl ?? KST_BASE_URL).replace(/\/$/, "");
+  let url = `${base}${pathNormalized}`;
 
   if (query && Object.keys(query).length > 0) {
     const search = new URLSearchParams(query);

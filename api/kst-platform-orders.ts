@@ -366,6 +366,10 @@ export type EtsyArtworkPackageUploadResponse = {
 export const ETSY_ARTWORK_PACKAGES_UPLOAD_PATH =
   "/system/platform-orders/etsy/artwork-packages/upload";
 
+/** 图包上传专用接口域名（同步图包到共享盘），替换默认 KST_BASE_URL 的域名，其余路径不变 */
+export const ETSY_ARTWORK_PACKAGES_UPLOAD_BASE_URL =
+  KST_BASE_URL.replace(/^https?:\/\/[^/]+/, "https://upload.kesiteng.cn");
+
 /** 通过统一 KST 认证代理上传 Etsy 图包 */
 export async function uploadEtsyArtworkPackageViaProxy(
   params: EtsyArtworkPackageUploadParams
@@ -380,6 +384,7 @@ export async function uploadEtsyArtworkPackageViaProxy(
   if (params.artworkRequestId) formFields.artworkRequestId = params.artworkRequestId;
   const data = await kstAuthenticatedRequest<EtsyArtworkPackageUploadResponse>({
     path: ETSY_ARTWORK_PACKAGES_UPLOAD_PATH,
+    baseUrl: ETSY_ARTWORK_PACKAGES_UPLOAD_BASE_URL,
     method: "POST",
     formFile: {
       blob: params.file,

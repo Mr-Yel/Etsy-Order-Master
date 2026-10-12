@@ -112,6 +112,7 @@ export default defineConfig({
       'https://i.etsystatic.com/*',
       'https://test.kesiteng.cn/*',
       'https://kstgl.kesiteng.cn/*',
+      'https://upload.kesiteng.cn/*',
       // 'https://huangxiangkun.uno/*',
     ],
     

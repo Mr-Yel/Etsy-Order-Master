@@ -20,6 +20,8 @@ export type KstProxyFormFile = {
 /** 代理请求：path 为相对路径，如 /system/platform-orders/list */
 export type KstProxyRequest = {
   path: string;
+  /** 可选：覆盖默认 KST_BASE_URL 的接口域名，如 https://upload.kesiteng.cn（不含路径） */
+  baseUrl?: string;
   method?: "GET" | "POST" | "PUT" | "DELETE";
   /** 透传给目标接口的自定义请求头 */
   headers?: Record<string, string>;

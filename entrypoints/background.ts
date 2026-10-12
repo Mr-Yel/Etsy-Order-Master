@@ -211,6 +211,7 @@ export default defineBackground(() => {
         const req = message as KstProxyRequest & { type: string };
         runKstProxyInBackground({
           path: req.path,
+          baseUrl: req.baseUrl,
           method: req.method,
           headers: req.headers,
           query: req.query,
