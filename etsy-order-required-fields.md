@@ -28,6 +28,7 @@
 | **Ship Country** | 收货国家 | 必须 | **接口**：订单列表 `orders[].fulfillment.to_address.country`。**DOM**：详情 `div.address .country-name`。 |
 | **SKU** | 库存单位/商品SKU | 必须 | **接口**：订单列表 `orders[].transactions[].product.product_identifier`；当前展示/导出按 **一行一个 transaction**，每行取当前 transaction 的 SKU。**DOM**：详情/列表 "SKU: " 后文本或 Receipt 表格内 SKU 单元格。 |
 | **Item Name** | 商品名称 | 必须 | **接口**：订单列表 `orders[].transactions[].product.title`；当前展示/导出按 **一行一个 transaction**，每行取当前 transaction 的商品名。**DOM**：商品标题区域文本；若页面节点稳定，可取对应标题元素。 |
+| **Thumbnail URL** | 商品图链接 | 可能需要的 | **接口**：订单列表 `orders[].transactions[].product.image_url_75x75`（Etsy 只给 75×75 缩略图）。导出时把 URL 尺寸段 `il_75x75` 改写为 `il_350x350`，输出 350×350 图片地址；该尺寸段支持任意值（`il_fullxfull` 为原图）。**DOM**：商品图 `<img>` 的 `src`（同样可改写尺寸段）。 |
 | **Number of Items** | 商品数量 | 必须 | **接口**：订单列表 `orders[].transactions[].quantity`；当前展示/导出按 **一行一个 transaction**，每行取当前 transaction 的数量。**DOM**：详情 "1 Item(s)" / "1 item" 或 `table.b-xs-0 tbody tr` 数量；列表 "1 item" 文本。 |
 | **Currency** | 货币 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.total_cost.currency_code`；或收益接口 `shop_currency`。**DOM**：从金额前的 "$" 或 Order total 推断；美国站可默认 USD。 |
 | **Order Value** | 订单价值 | 必须 | **接口**：订单列表 `orders[].payment.cost_breakdown.items_cost`（value 为分需 ÷100）；或收益接口 `buyer_paid_details.items_price`。**DOM**：详情 Receipt "Item total" 行右侧金额。 |

@@ -8,6 +8,8 @@
 
 **Item Name**：以列表接口 `transactions[].product.title` 的值为准，对应 Etsy 页面商品标题。
 
+**Thumbnail URL**：以列表接口 `transactions[].product.image_url_75x75` 为源，Etsy 只返回 **75×75** 缩略图；导出时改写 URL 中的尺寸段 `il_{宽}x{高}` 为 **350×350**（如 `il_75x75.xxx.jpg` → `il_350x350.xxx.jpg`）。该尺寸段支持任意值（另有 `il_fullxfull` 原图），无需重新请求接口。
+
 ---
 
 ## 接口一览
@@ -67,6 +69,7 @@
 | InPerson Location | 能 |暂时固定为 空 |
 | SKU | 能 | `orders[].transactions[].product.product_identifier`（**取值以列表接口为准**，如 "QUECABSW023P02"；多商品可逗号拼接或按行展开） |
 | Item Name | 能 | `orders[].transactions[].product.title`（如 "Custom Beach Towels with Picture..."；多商品可逗号拼接） |
+| Thumbnail URL | 能 | `orders[].transactions[].product.image_url_75x75`（75×75 缩略图）；导出时把尺寸段 `il_75x75` 改写为 `il_350x350`，输出 350×350 图片 URL |
 
 **当前展示/导出策略**：按「一行一个 transaction」展开。同一订单如果有多个商品，会按 `transaction_id` 拆成多行；订单级字段（如 Coupon Code、Coupon Details、地址、Order Total）会在这些行中重复，商品级字段（如 Transaction ID、SKU、Item Name、Number of Items）则逐行对应当前 transaction。
 
@@ -169,3 +172,4 @@ EarningsDetails **不包含**：Order ID（需请求参数）、Transaction ID�
 | InPerson Location | 固定 空 | — | |
 | SKU | ✓ transactions[].product.product_identifier | — | 取值以列表为准 |
 | Item Name | ✓ transactions[].product.title | — | 取值以列表为准 |
+| Thumbnail URL | ✓ transactions[].product.image_url_75x75 | — | 源为 75×75；导出改写尺寸段为 350×350（`il_75x75` → `il_350x350`） |

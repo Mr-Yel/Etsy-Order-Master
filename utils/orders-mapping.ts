@@ -90,6 +90,21 @@ function formatCents(value: number | undefined): string {
   return (value / 100).toFixed(2);
 }
 
+/** 导出商品图目标尺寸：Etsy 列表接口只给 75×75，这里统一放大到 350×350 */
+export const THUMBNAIL_IMAGE_SIZE = "350x350";
+
+/**
+ * 改写 Etsy 图片 URL 的尺寸片段。
+ * Etsy CDN 的 `il_{宽}x{高}` 段支持任意尺寸（如 il_75x75 → il_350x350），
+ * 同一张图直接换尺寸即可拿到更大分辨率，无需额外请求。
+ */
+function toEtsyImageSize(url: string, size: string): string {
+  if (!url) return "";
+  const replaced = url.replace(/_\d+x\d+(?=\.)/, `_${size}`);
+  if (replaced !== url) return replaced;
+  return url.replace(/75x75/g, size);
+}
+
 // /** Card Processing Fees：processing_fee 为负数，取绝对值后 amount/divisor */
 // function formatProcessingFee(fee: ProcessingFeeFromDetail | undefined): string {
 //   if (fee?.divisor == null || fee.divisor === 0) return "";
@@ -190,7 +205,10 @@ export function mapOrdersToTableRows(
         "InPerson Location": "",
         SKU: safeStr(transaction.product?.product_identifier),
         "Item Name": safeStr(transaction.product?.title),
-        "Thumbnail URL": safeStr(transaction.product?.image_url_75x75),
+        "Thumbnail URL": toEtsyImageSize(
+          safeStr(transaction.product?.image_url_75x75),
+          THUMBNAIL_IMAGE_SIZE
+        ),
       };
     });
   });
