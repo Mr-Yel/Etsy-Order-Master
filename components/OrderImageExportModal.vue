@@ -30,6 +30,7 @@ type OrderImageExportRow = {
   transactionId: string;
   transactionIndex: number;
   sku: string;
+  skuOverride: string | null;
   variations: Array<{
     property: string;
     value: string;
@@ -65,6 +66,8 @@ const downloadCompleted = ref(0);
 const downloadTotal = ref(0);
 const rows = ref<OrderImageExportRow[]>([]);
 const selected = ref<Set<string>>(new Set());
+const editingRowKey = ref<string | null>(null);
+const draftSku = ref("");
 const orderStateOptions = ref<{ label: string; value: number }[]>([]);
 const selectedOrderStateId = ref<number | "">("");
 const pageSize = ref(100);
@@ -87,6 +90,12 @@ const vInitialText: Directive<HTMLElement, string> = {
     }
   },
 };
+const vAutoFocus: Directive<HTMLInputElement> = {
+  mounted(el) {
+    el.focus();
+    el.select();
+  },
+};
 const overflowTextPreview = ref<{
   text: string;
   x: number;
@@ -107,7 +116,7 @@ const isAllSelected = computed(() => {
 });
 
 const selectedSkuCount = computed(
-  () => new Set(selectedRows.value.map((row) => normalizeSku(row.sku))).size
+  () => new Set(selectedRows.value.map((row) => getExportSku(row))).size
 );
 
 const downloadButtonText = computed(() => {
@@ -230,8 +239,39 @@ function extractSkuBetweenTwoHyphens(sku: string): string {
   return match?.[1] ?? "";
 }
 
+function getExportSku(row: OrderImageExportRow): string {
+  const override = (row.skuOverride ?? "").trim();
+  return override || normalizeSku(row.sku);
+}
+
 function hasSku(row: OrderImageExportRow): boolean {
-  return row.sku.trim().length > 0;
+  const override = (row.skuOverride ?? "").trim();
+  return override.length > 0 || row.sku.trim().length > 0;
+}
+
+function startEditSku(row: OrderImageExportRow) {
+  if (downloading.value || syncing.value) return;
+  editingRowKey.value = row.rowKey;
+  const override = (row.skuOverride ?? "").trim();
+  draftSku.value = override || normalizeSku(row.sku);
+}
+
+function confirmEditSku(row: OrderImageExportRow) {
+  const trimmed = draftSku.value.trim();
+  const defaultSku = normalizeSku(row.sku).trim();
+  row.skuOverride = trimmed && trimmed !== defaultSku ? trimmed : null;
+  editingRowKey.value = null;
+  draftSku.value = "";
+  if (!hasSku(row)) {
+    const next = new Set(selected.value);
+    next.delete(row.rowKey);
+    selected.value = next;
+  }
+}
+
+function cancelEditSku() {
+  editingRowKey.value = null;
+  draftSku.value = "";
 }
 
 function decodeHtmlEntities(value: string): string {
@@ -307,6 +347,7 @@ function buildRows(orderList: EtsyOrder[]): OrderImageExportRow[] {
         transactionId,
         transactionIndex: index + 1,
         sku,
+        skuOverride: null,
         variations: getVariationFields(transaction),
         itemImageUrl: imageUrl,
         itemImageDownloadUrl: toLargeEtsyImageUrl(imageUrl),
@@ -449,7 +490,7 @@ async function downloadSelected(saveToDisk = true): Promise<Blob | null> {
     const productImageSkuSet = new Set<string>();
 
     for (const row of data) {
-      const sku = normalizeSku(row.sku);
+      const sku = getExportSku(row);
       const folderName = sanitizeFilePart(sku);
       const folder = zip.folder(folderName);
       if (!folder) continue;
@@ -583,7 +624,12 @@ async function syncArtworkPackage() {
     await uploadEtsyArtworkPackageViaProxy({
       shopId: etsy.shopId,
       file,
-      ordersJson: buildEtsyArtworkPackageOrdersJson(selectedRows.value),
+      ordersJson: buildEtsyArtworkPackageOrdersJson(
+        selectedRows.value.map((row) => ({
+          orderId: row.orderId,
+          sku: getExportSku(row),
+        }))
+      ),
     });
     exportNotice.value = "图包已同步到共享盘";
   } catch (err) {
@@ -692,7 +738,87 @@ onMounted(() => {
                 <td class="text-cell">
                   <div>{{ row.orderId }}</div>
                   <div class="sub-text">第 {{ row.transactionIndex }} 项</div>
-                  <div class="sub-text">{{ normalizeSku(row.sku) }}</div>
+                  <div class="sku-row">
+                    <template v-if="editingRowKey === row.rowKey">
+                      <input
+                        v-auto-focus
+                        v-model="draftSku"
+                        class="sku-edit-input"
+                        type="text"
+                        @keydown.enter.prevent="confirmEditSku(row)"
+                        @keydown.esc.prevent="cancelEditSku"
+                      />
+                      <button
+                        type="button"
+                        class="sku-icon-btn sku-icon-confirm"
+                        title="确认保存"
+                        aria-label="确认保存"
+                        @click="confirmEditSku(row)"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          width="13"
+                          height="13"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M3 8.5l3.2 3.2L13 5" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="sku-icon-btn sku-icon-cancel"
+                        title="放弃修改"
+                        aria-label="放弃修改"
+                        @click="cancelEditSku"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          width="13"
+                          height="13"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M4 4l8 8M12 4l-8 8" />
+                        </svg>
+                      </button>
+                    </template>
+                    <template v-else>
+                      <span class="sku-text" :title="getExportSku(row)">
+                        {{ getExportSku(row) }}
+                      </span>
+                      <button
+                        type="button"
+                        class="sku-edit-btn"
+                        title="编辑 SKU"
+                        aria-label="编辑 SKU"
+                        :disabled="downloading || syncing"
+                        @click="startEditSku(row)"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          width="13"
+                          height="13"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M11.3 2.1l2.6 2.6-8 8-3.3.7.7-3.3 8-8z" />
+                        </svg>
+                      </button>
+                    </template>
+                  </div>
                   <div v-if="!hasSku(row)" class="disabled-reason">
                     无 SKU，无法选择
                   </div>
@@ -1228,5 +1354,84 @@ onMounted(() => {
 .export-notice {
   color: #0f766e;
   font-size: 13px;
+}
+
+.sku-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  max-width: 100%;
+}
+
+.sku-text {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.sku-edit-btn,
+.sku-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  flex-shrink: 0;
+  color: #6b7280;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sku-edit-btn:hover:not(:disabled) {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.sku-edit-btn:disabled {
+  color: #d1d5db;
+  cursor: not-allowed;
+}
+
+.sku-icon-confirm {
+  color: #0f766e;
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+
+.sku-icon-confirm:hover {
+  background: #ccfbf1;
+}
+
+.sku-icon-cancel {
+  color: #6b7280;
+  background: #fff;
+  border-color: #e5e7eb;
+}
+
+.sku-icon-cancel:hover {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.sku-edit-input {
+  width: 150px;
+  padding: 3px 6px;
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.3;
+  border: 1px solid #3b82f6;
+  border-radius: 5px;
+  outline: none;
+  box-shadow: 0 0 0 1px #3b82f6;
+  box-sizing: border-box;
 }
 </style>
