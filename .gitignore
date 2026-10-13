@@ -20,6 +20,9 @@ dev-token.txt
 # Reasonix 本地配置
 reasonix.toml
 
+# WorkBuddy 本地工作数据（记忆日志、临时预览页等，仅本地保留，勿提交）
+.workbuddy/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
