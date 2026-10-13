@@ -17,7 +17,11 @@ import { fetchEtsyImagesAsBase64 } from "@/lib/etsy-bridge-client";
 import { uploadEtsyArtworkPackageViaProxy } from "@/api";
 import { buildEtsyArtworkPackageOrdersJson } from "@/lib/kst-artwork-package-utils.mjs";
 import { runLimitedJobs } from "@/lib/limited-jobs.mjs";
-import type { EtsyOrder, EtsyOrderTransaction } from "@/types/etsy-order";
+import type {
+  EtsyBuyer,
+  EtsyOrder,
+  EtsyOrderTransaction,
+} from "@/types/etsy-order";
 import { getUploadedPhotoCount, isPhotoVariation } from "@/types/etsy-order";
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -27,6 +31,8 @@ type AttachmentStatus = "skipped" | "loading" | "loaded" | "error";
 type OrderImageExportRow = {
   rowKey: string;
   orderId: number;
+  orderDate: number | null;
+  buyerUsername: string;
   transactionId: string;
   transactionIndex: number;
   sku: string;
@@ -42,6 +48,18 @@ type OrderImageExportRow = {
   attachmentStatus: AttachmentStatus;
   attachmentError: string;
   noteText: string;
+};
+/**
+ * 展示层用的订单分组：同一个 order_id 的商品行聚合在一起，
+ * 订单号只在分组头出现一次，子行只保留「第 N 项」。
+ */
+type OrderImageExportGroup = {
+  orderId: number;
+  orderDate: number | null;
+  buyerUsername: string;
+  rows: OrderImageExportRow[];
+  /** 组内可勾选的行数（有 SKU 的行） */
+  selectableCount: number;
 };
 type ImageJob = {
   url: string;
@@ -66,6 +84,7 @@ const downloadCompleted = ref(0);
 const downloadTotal = ref(0);
 const rows = ref<OrderImageExportRow[]>([]);
 const selected = ref<Set<string>>(new Set());
+const collapsedOrders = ref<Set<number>>(new Set());
 const editingRowKey = ref<string | null>(null);
 const draftSku = ref("");
 const orderStateOptions = ref<{ label: string; value: number }[]>([]);
@@ -109,6 +128,30 @@ const selectedRows = computed(() =>
 const selectableRows = computed(() =>
   rows.value.filter((row) => hasSku(row))
 );
+
+/**
+ * 把平铺的行按订单号聚合成分组。`rows` 由订单列表顺序展开而来，
+ * 同一订单的行天然连续，这里只是把它们收拢到同一个分组对象里。
+ */
+const groups = computed<OrderImageExportGroup[]>(() => {
+  const grouped = new Map<number, OrderImageExportGroup>();
+  for (const row of rows.value) {
+    let group = grouped.get(row.orderId);
+    if (!group) {
+      group = {
+        orderId: row.orderId,
+        orderDate: row.orderDate,
+        buyerUsername: row.buyerUsername,
+        rows: [],
+        selectableCount: 0,
+      };
+      grouped.set(row.orderId, group);
+    }
+    group.rows.push(row);
+    if (hasSku(row)) group.selectableCount += 1;
+  }
+  return Array.from(grouped.values());
+});
 
 const isAllSelected = computed(() => {
   if (selectableRows.value.length === 0) return false;
@@ -201,6 +244,66 @@ function toggleRow(row: OrderImageExportRow) {
   if (next.has(row.rowKey)) next.delete(row.rowKey);
   else next.add(row.rowKey);
   selected.value = next;
+}
+
+/**
+ * `order_date` 是 Unix 时间戳（秒）。按项目既有约定用 UTC 计算并格式化，
+ * 避免本地时区导致日期偏移。
+ */
+function formatOrderDate(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  const ms = value > 1e12 ? value : value * 1000;
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (num: number) => String(num).padStart(2, "0");
+  const year = String(date.getUTCFullYear()).slice(-2);
+  return `${pad(date.getUTCMonth() + 1)}/${pad(
+    date.getUTCDate()
+  )}/${year} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+}
+
+function getGroupSelectedCount(group: OrderImageExportGroup): number {
+  return group.rows.reduce(
+    (count, row) => (selected.value.has(row.rowKey) ? count + 1 : count),
+    0
+  );
+}
+
+function isGroupAllSelected(group: OrderImageExportGroup): boolean {
+  return (
+    group.selectableCount > 0 &&
+    getGroupSelectedCount(group) >= group.selectableCount
+  );
+}
+
+function getGroupSkuCount(group: OrderImageExportGroup): number {
+  return new Set(
+    group.rows.filter((row) => hasSku(row)).map((row) => getExportSku(row))
+  ).size;
+}
+
+function toggleGroup(group: OrderImageExportGroup) {
+  if (group.selectableCount === 0) return;
+  const next = new Set(selected.value);
+  if (isGroupAllSelected(group)) {
+    group.rows.forEach((row) => next.delete(row.rowKey));
+  } else {
+    group.rows.forEach((row) => {
+      if (hasSku(row)) next.add(row.rowKey);
+    });
+  }
+  selected.value = next;
+}
+
+function isGroupCollapsed(orderId: number): boolean {
+  return collapsedOrders.value.has(orderId);
+}
+
+function toggleGroupCollapse(orderId: number) {
+  const next = new Set(collapsedOrders.value);
+  if (next.has(orderId)) next.delete(orderId);
+  else next.add(orderId);
+  collapsedOrders.value = next;
 }
 
 function hasUploadVariation(transaction: EtsyOrderTransaction): boolean {
@@ -327,12 +430,26 @@ function toLargeEtsyImageUrl(url: string): string {
   return url.replace(/75x75/g, "1000x1000");
 }
 
-function buildRows(orderList: EtsyOrder[]): OrderImageExportRow[] {
+function buildRows(
+  orderList: EtsyOrder[],
+  buyers: EtsyBuyer[] = []
+): OrderImageExportRow[] {
+  const buyerNameById = new Map<number, string>();
+  for (const buyer of buyers) {
+    if (buyer.buyer_id != null && buyer.username) {
+      buyerNameById.set(buyer.buyer_id, buyer.username);
+    }
+  }
+
   return orderList.flatMap((order) => {
     const transactions =
       order.transactions != null && order.transactions.length > 0
         ? order.transactions
         : [{ type: "Etsy_Order_Transaction" }];
+    const orderDate =
+      typeof order.order_date === "number" ? order.order_date : null;
+    const buyerUsername =
+      (order.buyer_id != null ? buyerNameById.get(order.buyer_id) : "") || "";
 
     return transactions.map((transaction, index) => {
       const transactionId = String(
@@ -344,6 +461,8 @@ function buildRows(orderList: EtsyOrder[]): OrderImageExportRow[] {
       return {
         rowKey: `${order.order_id}-${transactionId || index}`,
         orderId: order.order_id,
+        orderDate,
+        buyerUsername,
         transactionId,
         transactionIndex: index + 1,
         sku,
@@ -435,14 +554,14 @@ async function fetchOrders() {
       return;
     }
 
-    const { orders: orderList } = await fetchEtsyOrderList(
+    const { orders: orderList, buyers } = await fetchEtsyOrderList(
       etsy.shopId,
       pageSize.value,
       buildEtsyOrderListBaseParams(String(stateIdRaw)),
       { credentials: "include" }
     );
 
-    rows.value = buildRows(orderList);
+    rows.value = buildRows(orderList, buyers);
     selected.value = new Set(
       rows.value.filter((row) => hasSku(row)).map((row) => row.rowKey)
     );
@@ -693,6 +812,9 @@ onMounted(() => {
             重试
           </button>
         </div>
+        <div v-else-if="groups.length === 0" class="empty-state">
+          当前状态下没有订单，可切换订单状态或调整数量后重试。
+        </div>
         <div v-else class="table-wrap">
           <table class="table">
             <thead>
@@ -706,7 +828,7 @@ onMounted(() => {
                     @change="toggleAll"
                   />
                 </th>
-                <th>Order ID</th>
+                <th>项目 / SKU</th>
                 <th>商品图</th>
                 <th>订单附件</th>
                 <th>变体信息</th>
@@ -722,91 +844,26 @@ onMounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="row in rows"
-                :key="row.rowKey"
-                :class="{ 'row-disabled': !hasSku(row) }"
-              >
-                <td class="col-check">
-                  <input
-                    type="checkbox"
-                    :checked="selected.has(row.rowKey)"
-                    :disabled="!hasSku(row)"
-                    @change="toggleRow(row)"
-                  />
-                </td>
-                <td class="text-cell">
-                  <div>{{ row.orderId }}</div>
-                  <div class="sub-text">第 {{ row.transactionIndex }} 项</div>
-                  <div class="sku-row">
-                    <template v-if="editingRowKey === row.rowKey">
-                      <input
-                        v-auto-focus
-                        v-model="draftSku"
-                        class="sku-edit-input"
-                        type="text"
-                        @keydown.enter.prevent="confirmEditSku(row)"
-                        @keydown.esc.prevent="cancelEditSku"
-                      />
+              <template v-for="group in groups" :key="group.orderId">
+                <tr class="group-row">
+                  <td colspan="6">
+                    <div class="group-bar">
                       <button
                         type="button"
-                        class="sku-icon-btn sku-icon-confirm"
-                        title="确认保存"
-                        aria-label="确认保存"
-                        @click="confirmEditSku(row)"
+                        class="group-toggle"
+                        :class="{ 'is-collapsed': isGroupCollapsed(group.orderId) }"
+                        :aria-expanded="!isGroupCollapsed(group.orderId)"
+                        :title="
+                          isGroupCollapsed(group.orderId)
+                            ? '展开该订单'
+                            : '收起该订单'
+                        "
+                        @click="toggleGroupCollapse(group.orderId)"
                       >
                         <svg
-                          viewBox="0 0 16 16"
-                          width="13"
-                          height="13"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          aria-hidden="true"
-                        >
-                          <path d="M3 8.5l3.2 3.2L13 5" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        class="sku-icon-btn sku-icon-cancel"
-                        title="放弃修改"
-                        aria-label="放弃修改"
-                        @click="cancelEditSku"
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          width="13"
-                          height="13"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          aria-hidden="true"
-                        >
-                          <path d="M4 4l8 8M12 4l-8 8" />
-                        </svg>
-                      </button>
-                    </template>
-                    <template v-else>
-                      <span class="sku-text" :title="getExportSku(row)">
-                        {{ getExportSku(row) }}
-                      </span>
-                      <button
-                        type="button"
-                        class="sku-edit-btn"
-                        title="编辑 SKU"
-                        aria-label="编辑 SKU"
-                        :disabled="downloading || syncing"
-                        @click="startEditSku(row)"
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          width="13"
-                          height="13"
+                          viewBox="0 0 12 12"
+                          width="12"
+                          height="12"
                           fill="none"
                           stroke="currentColor"
                           stroke-width="1.6"
@@ -814,116 +871,264 @@ onMounted(() => {
                           stroke-linejoin="round"
                           aria-hidden="true"
                         >
-                          <path d="M11.3 2.1l2.6 2.6-8 8-3.3.7.7-3.3 8-8z" />
+                          <path d="M2 4.2l4 4 4-4" />
                         </svg>
                       </button>
-                    </template>
-                  </div>
-                  <div v-if="!hasSku(row)" class="disabled-reason">
-                    无 SKU，无法选择
-                  </div>
-                </td>
-                <td>
-                  <span v-if="row.itemImageUrl" class="image-preview-wrap">
-                    <img
-                      :src="row.itemImageUrl"
-                      class="thumb"
-                      loading="lazy"
-                      alt="商品图"
-                      @mouseenter="
-                        showImagePreview(
-                          row.itemImageDownloadUrl || row.itemImageUrl,
-                          '商品图大图',
-                          $event
-                        )
-                      "
-                      @mousemove="updateImagePreviewPosition($event)"
-                      @mouseleave="hideImagePreview"
+                      <input
+                        type="checkbox"
+                        class="group-check"
+                        :checked="isGroupAllSelected(group)"
+                        :indeterminate="
+                          getGroupSelectedCount(group) > 0 &&
+                          !isGroupAllSelected(group)
+                        "
+                        :disabled="group.selectableCount === 0"
+                        :aria-label="`勾选订单 ${group.orderId} 的全部商品`"
+                        @change="toggleGroup(group)"
+                      />
+                      <span class="group-order">订单 {{ group.orderId }}</span>
+                      <span class="group-count">共 {{ group.rows.length }} 件</span>
+                      <span
+                        v-if="formatOrderDate(group.orderDate)"
+                        class="group-meta"
+                        title="下单时间（UTC）"
+                      >
+                        {{ formatOrderDate(group.orderDate) }}
+                      </span>
+                      <span
+                        v-if="group.buyerUsername"
+                        class="group-meta group-buyer"
+                        :title="group.buyerUsername"
+                      >
+                        {{ group.buyerUsername }}
+                      </span>
+                      <span class="group-right">
+                        已选 {{ getGroupSelectedCount(group) }} /
+                        {{ group.selectableCount }} · 该订单
+                        {{ getGroupSkuCount(group) }} 个 SKU
+                      </span>
+                      <span v-if="group.selectableCount === 0" class="group-warn">
+                        该订单无 SKU
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+                <tr
+                  v-for="(row, rowIndex) in group.rows"
+                  v-show="!isGroupCollapsed(group.orderId)"
+                  :key="row.rowKey"
+                  :class="{
+                    'row-disabled': !hasSku(row),
+                    'group-last-row': rowIndex === group.rows.length - 1,
+                  }"
+                >
+                  <td class="col-check">
+                    <input
+                      type="checkbox"
+                      :checked="selected.has(row.rowKey)"
+                      :disabled="!hasSku(row)"
+                      @change="toggleRow(row)"
                     />
-                  </span>
-                  <span v-else class="muted">无商品图</span>
-                </td>
-                <td class="attachment-cell">
-                  <div v-if="row.attachmentStatus === 'skipped'" class="muted">
-                    无附件
-                  </div>
-                  <div v-else-if="row.attachmentStatus === 'loading'" class="muted">
-                    附件加载中...
-                  </div>
-                  <div v-else-if="row.attachmentStatus === 'error'" class="error-text">
-                    {{ row.attachmentError }}
-                  </div>
-                  <div v-else-if="row.attachments.length === 0" class="muted">
-                    未返回附件
-                  </div>
-                  <div v-else class="attachment-list">
-                    <span
-                      v-for="file in row.attachments"
-                      :key="file.fileId"
-                      class="image-preview-wrap"
-                    >
+                  </td>
+                  <td class="text-cell">
+                    <div class="sub-text">
+                      第 {{ row.transactionIndex }} 项
+                    </div>
+                    <div class="sku-row">
+                      <template v-if="editingRowKey === row.rowKey">
+                        <input
+                          v-auto-focus
+                          v-model="draftSku"
+                          class="sku-edit-input"
+                          type="text"
+                          @keydown.enter.prevent="confirmEditSku(row)"
+                          @keydown.esc.prevent="cancelEditSku"
+                        />
+                        <button
+                          type="button"
+                          class="sku-icon-btn sku-icon-confirm"
+                          title="确认保存"
+                          aria-label="确认保存"
+                          @click="confirmEditSku(row)"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            width="13"
+                            height="13"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M3 8.5l3.2 3.2L13 5" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="sku-icon-btn sku-icon-cancel"
+                          title="放弃修改"
+                          aria-label="放弃修改"
+                          @click="cancelEditSku"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            width="13"
+                            height="13"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M4 4l8 8M12 4l-8 8" />
+                          </svg>
+                        </button>
+                      </template>
+                      <template v-else>
+                        <span class="sku-text" :title="getExportSku(row)">
+                          {{ getExportSku(row) }}
+                        </span>
+                        <button
+                          type="button"
+                          class="sku-edit-btn"
+                          title="编辑 SKU"
+                          aria-label="编辑 SKU"
+                          :disabled="downloading || syncing"
+                          @click="startEditSku(row)"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            width="13"
+                            height="13"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M11.3 2.1l2.6 2.6-8 8-3.3.7.7-3.3 8-8z" />
+                          </svg>
+                        </button>
+                      </template>
+                    </div>
+                    <div v-if="!hasSku(row)" class="disabled-reason">
+                      无 SKU，无法选择
+                    </div>
+                  </td>
+                  <td>
+                    <span v-if="row.itemImageUrl" class="image-preview-wrap">
                       <img
-                        :src="file.thumbnailUrl"
-                        :title="file.filename"
+                        :src="row.itemImageUrl"
                         class="thumb"
                         loading="lazy"
-                        alt="订单附件"
-                        @mouseenter="showImagePreview(file.url, '订单附件大图', $event)"
+                        alt="商品图"
+                        @mouseenter="
+                          showImagePreview(
+                            row.itemImageDownloadUrl || row.itemImageUrl,
+                            '商品图大图',
+                            $event
+                          )
+                        "
                         @mousemove="updateImagePreviewPosition($event)"
                         @mouseleave="hideImagePreview"
                       />
                     </span>
-                  </div>
-                </td>
-                <td class="variations-cell">
-                  <div v-if="row.variations.length === 0" class="muted">
-                    无变体
-                  </div>
-                  <div v-else class="variation-form">
-                    <label
-                      v-for="(variation, index) in row.variations"
-                      :key="`${row.rowKey}-variation-${index}`"
-                      class="variation-field"
+                    <span v-else class="muted">无商品图</span>
+                  </td>
+                  <td class="attachment-cell">
+                    <div v-if="row.attachmentStatus === 'skipped'" class="muted">
+                      无附件
+                    </div>
+                    <div
+                      v-else-if="row.attachmentStatus === 'loading'"
+                      class="muted"
                     >
-                      <span class="variation-label">
-                        <span
-                          class="variation-label-text"
+                      附件加载中...
+                    </div>
+                    <div
+                      v-else-if="row.attachmentStatus === 'error'"
+                      class="error-text"
+                    >
+                      {{ row.attachmentError }}
+                    </div>
+                    <div v-else-if="row.attachments.length === 0" class="muted">
+                      未返回附件
+                    </div>
+                    <div v-else class="attachment-list">
+                      <span
+                        v-for="file in row.attachments"
+                        :key="file.fileId"
+                        class="image-preview-wrap"
+                      >
+                        <img
+                          :src="file.thumbnailUrl"
+                          :title="file.filename"
+                          class="thumb"
+                          loading="lazy"
+                          alt="订单附件"
                           @mouseenter="
-                            showOverflowTextPreview(
-                              variation.property || '未命名',
-                              $event
-                            )
+                            showImagePreview(file.url, '订单附件大图', $event)
                           "
-                          @mousemove="
-                            updateOverflowTextPreviewPosition(
-                              variation.property || '未命名',
-                              $event
-                            )
-                          "
-                          @mouseleave="hideOverflowTextPreview"
-                        >
-                          {{ variation.property || "未命名" }}
-                        </span>
+                          @mousemove="updateImagePreviewPosition($event)"
+                          @mouseleave="hideImagePreview"
+                        />
                       </span>
-                      <input
-                        class="variation-input"
-                        type="text"
-                        :value="variation.value"
-                        readonly
-                      />
-                    </label>
-                  </div>
-                </td>
-                <td>
-                  <div
-                    v-initial-text="row.noteText"
-                    class="note-editor"
-                    contenteditable="true"
-                    data-placeholder="输入个性化备注"
-                    @input="onNoteInput(row, $event)"
-                  />
-                </td>
-              </tr>
+                    </div>
+                  </td>
+                  <td class="variations-cell">
+                    <div v-if="row.variations.length === 0" class="muted">
+                      无变体
+                    </div>
+                    <div v-else class="variation-form">
+                      <label
+                        v-for="(variation, index) in row.variations"
+                        :key="`${row.rowKey}-variation-${index}`"
+                        class="variation-field"
+                      >
+                        <span class="variation-label">
+                          <span
+                            class="variation-label-text"
+                            @mouseenter="
+                              showOverflowTextPreview(
+                                variation.property || '未命名',
+                                $event
+                              )
+                            "
+                            @mousemove="
+                              updateOverflowTextPreviewPosition(
+                                variation.property || '未命名',
+                                $event
+                              )
+                            "
+                            @mouseleave="hideOverflowTextPreview"
+                          >
+                            {{ variation.property || "未命名" }}
+                          </span>
+                        </span>
+                        <input
+                          class="variation-input"
+                          type="text"
+                          :value="variation.value"
+                          readonly
+                        />
+                      </label>
+                    </div>
+                  </td>
+                  <td>
+                    <div
+                      v-initial-text="row.noteText"
+                      class="note-editor"
+                      contenteditable="true"
+                      data-placeholder="输入个性化备注"
+                      @input="onNoteInput(row, $event)"
+                    />
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -1433,5 +1638,104 @@ onMounted(() => {
   outline: none;
   box-shadow: 0 0 0 1px #3b82f6;
   box-sizing: border-box;
+}
+
+/* ===== 订单分组 ===== */
+
+.group-row td {
+  padding: 14px 0 4px;
+  border-bottom: none;
+}
+
+.group-row:first-child td {
+  padding-top: 0;
+}
+
+.group-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: #e6f1fb;
+  border-left: 3px solid #378add;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  padding: 0;
+  color: #185fa5;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.group-toggle:hover {
+  background: #cfe3f8;
+}
+
+.group-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.group-toggle.is-collapsed svg {
+  transform: rotate(-90deg);
+}
+
+.group-check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.group-order {
+  font-weight: 600;
+  color: #185fa5;
+  white-space: nowrap;
+}
+
+.group-count,
+.group-right {
+  color: #378add;
+  white-space: nowrap;
+}
+
+.group-right {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.group-meta {
+  max-width: 170px;
+  overflow: hidden;
+  color: #4f86c6;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-warn {
+  color: #b45309;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.group-last-row td {
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.empty-state {
+  padding: 40px 20px;
+  color: #6b7280;
+  font-size: 14px;
+  text-align: center;
 }
 </style>
