@@ -9,6 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_EOM_APP_LOG_BASE_URL?: string;
   readonly VITE_EOM_APP_LOG_CLIENT_ID?: string;
   readonly VITE_EOM_APP_LOG_CLIENT_SECRET?: string;
+  /** 构建时从 package.json 注入的版本号 */
+  readonly VITE_EOM_VERSION?: string;
 }
 
 declare module "@/lib/kst-artwork-import-utils.mjs" {

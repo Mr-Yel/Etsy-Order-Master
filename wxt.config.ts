@@ -25,6 +25,18 @@ function devTokenPlugin() {
   };
 }
 
+/** 构建时从 package.json 读取版本号（用于界面展示） */
+function readPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(process.cwd(), "package.json"), "utf-8")
+    ) as { version?: string };
+    return typeof pkg.version === "string" ? pkg.version : "";
+  } catch {
+    return "";
+  }
+}
+
 function readOptionalConfigValue(fileName: string, envName: string): string {
   const envValue = process.env[envName];
   if (typeof envValue === "string" && envValue.trim()) {
@@ -80,6 +92,9 @@ export default defineConfig({
     artifactTemplate: "{{name}}-{{version}}-{{browser}}-{{mode}}.zip",
   },
   vite: () => ({
+    define: {
+      "import.meta.env.VITE_EOM_VERSION": JSON.stringify(readPackageVersion()),
+    },
     plugins: [
       devTokenPlugin(),
       // appLogConfigPlugin(),
