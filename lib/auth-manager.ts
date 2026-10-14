@@ -15,6 +15,19 @@ const OPEN_LOGIN_PAGE_MESSAGE_TYPE = "OPEN_LOGIN_PAGE" as const;
 const STORAGE_KEY = "eomUser";
 const CREDENTIALS_STORAGE_KEY = "eomRememberCredentials";
 
+/**
+ * 会话校验结果缓存：60s 内重复调用 ensureSession 不再请求 getInfo。
+ * 以 token 字符串为键，用户重新登录（token 变化）后旧缓存自动失效。
+ */
+const SESSION_TTL_MS = 60_000;
+let sessionCache: { token: string; at: number } | null = null;
+let sessionInflight: Promise<void> | null = null;
+
+/** 清空会话校验缓存（登出、401 后调用） */
+function clearSessionCache(): void {
+  sessionCache = null;
+}
+
 export type RememberedCredentials = {
   username: string;
   password: string;
@@ -105,6 +118,7 @@ export async function login(username: string, password: string): Promise<void> {
  * 登出：清除本地存储的用户信息
  */
 export async function logout(): Promise<void> {
+  clearSessionCache();
   await browser.storage.local.remove(STORAGE_KEY);
 }
 
@@ -204,6 +218,7 @@ export type Handle401Result = {
  */
 export async function handle401(): Promise<Handle401Result> {
   console.log("[KST] handle401: 清除本地登录态");
+  clearSessionCache();
   await browser.storage.local.remove(STORAGE_KEY);
   const credentials = await getRememberedCredentials();
   if (!credentials?.username) {
@@ -225,30 +240,69 @@ export async function handle401(): Promise<Handle401Result> {
 const GET_INFO_PATH = "/getInfo";
 
 /**
- * 确保有有效会话：有 token 时请求一次 getInfo，触发 401 时由 proxy 层统一处理（toast + 打开登录页）
- * 无 token 时轻提示并打开登录页。用于订单页等入口在 onMounted 时做一次登录态校验。
+ * 断言已登录：返回当前 token；无 token 时轻提示、打开登录页并抛出。
+ * 纯本地判断，不发任何网络请求。需认证的 KST 请求统一走这里。
+ * @throws 未登录时抛出 Error
  */
-export async function ensureSession(): Promise<void> {
+export async function requireLogin(): Promise<string> {
   const token = await getToken();
-  if (!token) {
-      getNotyf().error("未登录，请先登录");
+  if (token) return token;
 
-    try {
-      await browser.runtime.sendMessage({ type: OPEN_LOGIN_PAGE_MESSAGE_TYPE });
-    } catch (e) {
-      await openLoginPage();
-    }
-    return;
+  try {
+    getNotyf().error("未登录，请先登录");
+  } catch {
+    // 无 DOM 时忽略
   }
   try {
-    await sendKstProxyRequest<{ code?: number; user?: unknown }>({
-      path: GET_INFO_PATH,
-      method: "GET",
-      token,
-    });
+    await browser.runtime.sendMessage({ type: OPEN_LOGIN_PAGE_MESSAGE_TYPE });
   } catch {
-    // 401 等已由 sendKstProxyRequest 内 toast + openLoginPage 处理
+    await openLoginPage();
   }
+  throw new Error("未登录，请先登录");
+}
+
+/**
+ * 确保有有效会话：有 token 时请求一次 getInfo 探活，触发 401 时由 proxy 层统一处理（toast + 打开登录页）
+ * 无 token 时轻提示并打开登录页。
+ *
+ * 性能优化：探活结果按 token 缓存 SESSION_TTL_MS，同一 token 在有效期内直接命中缓存、不发请求；
+ * 并发调用复用同一个 inflight promise，避免点击/重挂载造成重复请求。
+ * 注意：token 是 RuoYi 风格 JWT（payload 无 exp），过期时间由服务端 Redis 决定，本地无法判断，
+ * 因此缓存只是「减少重复探活」，过期兜底始终由 proxy 层的 401 处理负责。
+ */
+export async function ensureSession(): Promise<void> {
+  let token: string;
+  try {
+    token = await requireLogin();
+  } catch {
+    // 未登录：requireLogin 已提示并打开登录页
+    return;
+  }
+
+  if (
+    sessionCache?.token === token &&
+    Date.now() - sessionCache.at < SESSION_TTL_MS
+  ) {
+    return;
+  }
+  if (sessionInflight) return sessionInflight;
+
+  sessionInflight = (async () => {
+    try {
+      await sendKstProxyRequest<{ code?: number; user?: unknown }>({
+        path: GET_INFO_PATH,
+        method: "GET",
+        token,
+      });
+      sessionCache = { token, at: Date.now() };
+    } catch {
+      // 401 等已由 sendKstProxyRequest 内 toast + openLoginPage 处理
+    } finally {
+      sessionInflight = null;
+    }
+  })();
+
+  return sessionInflight;
 }
 
 /**
