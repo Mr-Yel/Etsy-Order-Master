@@ -46,5 +46,9 @@ export async function sendKstProxyRequest<T = unknown>(req: KstProxyRequest): Pr
     handleKstProxyAuthError(payload);
     throw new Error(payload.error);
   }
-  throw new Error("KST 代理未返回有效结果");
+  throw new Error(
+    payload === undefined
+      ? "KST 代理未返回有效结果（后台未响应，请查看扩展后台控制台）"
+      : "KST 代理未返回有效结果"
+  );
 }

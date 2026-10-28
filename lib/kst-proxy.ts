@@ -68,10 +68,21 @@ export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unk
   }
 
   const res = await fetch(url, init);
-  const data = await res.json();
+  const rawText = await res.text();
+  let data: unknown = null;
+  if (rawText) {
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      // 非 JSON 响应（如网关 404 页面）交给下面的状态码分支给出明确提示
+      data = null;
+    }
+  }
 
   if (!res.ok) {
-    const msg = (data as { msg?: string })?.msg ?? res.statusText ?? `HTTP ${res.status}`;
+    const msg =
+      (data as { msg?: string } | null)?.msg ??
+      `HTTP ${res.status} ${res.statusText}`.trim();
     throw new Error(msg);
   }
 

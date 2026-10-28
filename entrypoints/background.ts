@@ -209,6 +209,12 @@ export default defineBackground(() => {
 
       if ((message as { type?: string })?.type === KST_PROXY_MESSAGE_TYPE) {
         const req = message as KstProxyRequest & { type: string };
+        // 写请求（POST/PUT/DELETE）数量少、排障价值高，打日志便于确认是否真的发出
+        const method = (req.method ?? "GET").toUpperCase();
+        const shouldLog = method !== "GET";
+        if (shouldLog) {
+          console.log("[KST-PROXY] 收到写请求", { method, path: req.path });
+        }
         runKstProxyInBackground({
           path: req.path,
           baseUrl: req.baseUrl,
@@ -222,6 +228,14 @@ export default defineBackground(() => {
         })
           .then(async (data) => {
             const body = data as { code?: number; msg?: string };
+            if (shouldLog) {
+              console.log("[KST-PROXY] 写请求响应", {
+                method,
+                path: req.path,
+                code: body?.code,
+                msg: body?.msg,
+              });
+            }
             if (body?.code === 401) {
               console.log("[KST] 检测到 401，执行 handle401");
               const result = await handle401();
@@ -239,12 +253,17 @@ export default defineBackground(() => {
             }
             sendResponse({ success: true as const, data });
           })
-          .catch((err: Error) =>
+          .catch((err: Error) => {
+            console.warn("[KST-PROXY] 请求失败", {
+              method,
+              path: req.path,
+              error: err?.message ?? String(err),
+            });
             sendResponse({
               success: false as const,
               error: err?.message ?? String(err),
-            })
-          );
+            });
+          });
         return true;
       }
 

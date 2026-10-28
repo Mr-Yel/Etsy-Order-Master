@@ -14,7 +14,12 @@ import {
   type EtsyOrderPersonalizationFile,
 } from "@/api/etsy-orders";
 import { fetchEtsyImagesAsBase64 } from "@/lib/etsy-bridge-client";
-import { uploadEtsyArtworkPackageViaProxy } from "@/api";
+import {
+  submitProductionArtExpectedImageCountsViaProxy,
+  uploadEtsyArtworkPackageViaProxy,
+  type ProductionArtExpectedImageCountOrder,
+  type ProductionArtExpectedImageCountsParams,
+} from "@/api";
 import { buildEtsyArtworkPackageOrdersJson } from "@/lib/kst-artwork-package-utils.mjs";
 import { runLimitedJobs } from "@/lib/limited-jobs.mjs";
 import type {
@@ -48,6 +53,8 @@ type OrderImageExportRow = {
   attachmentStatus: AttachmentStatus;
   attachmentError: string;
   noteText: string;
+  /** 该商品客户需要的生产图张数，默认 1，对应上报接口的 expectedImageCount */
+  expectedImageCount: number;
 };
 /**
  * 展示层用的订单分组：同一个 order_id 的商品行聚合在一起，
@@ -73,12 +80,24 @@ type ImageDownloadFailure = ImageJob & {
 const IMAGE_FETCH_TIMEOUT_MS = 30000;
 const IMAGE_FETCH_CONCURRENCY = 4;
 const LARGE_EXPORT_IMAGE_COUNT = 200;
+/** 生产图数量默认值 */
+const DEFAULT_EXPECTED_IMAGE_COUNT = 1;
+/** 多张生产图时，备注 txt 中必须出现的固定字段（冒号全/半角均可） */
+const MULTI_IMAGE_REMARK_KEYWORD = "多张生产图备注";
+/** 生产图数量上限，避免手滑输入超大值 */
+const MAX_EXPECTED_IMAGE_COUNT = 999;
 
 const loading = ref(true);
 const downloading = ref(false);
 const syncing = ref(false);
 const error = ref<string | null>(null);
 const exportNotice = ref<string | null>(null);
+/** 下载前的校验拦截提示（如缺少多张生产图备注） */
+const validationMessage = ref<string | null>(null);
+/** 校验未通过的行，用于表格高亮 */
+const invalidRowKeys = ref<Set<string>>(new Set());
+/** 当前 Etsy 店铺 ID，上报接口作为 shopCode 使用 */
+const shopId = ref<number | null>(null);
 const downloadStage = ref("");
 const downloadCompleted = ref(0);
 const downloadTotal = ref(0);
@@ -475,6 +494,7 @@ function buildRows(
         attachmentStatus: hasUploadVariation(transaction) ? "loading" : "skipped",
         attachmentError: "",
         noteText: getVariationNote(transaction),
+        expectedImageCount: DEFAULT_EXPECTED_IMAGE_COUNT,
       };
     });
   });
@@ -529,6 +549,9 @@ async function fetchOrders() {
   error.value = null;
   rows.value = [];
   selected.value = new Set();
+  shopId.value = null;
+  validationMessage.value = null;
+  invalidRowKeys.value = new Set();
 
   try {
     const etsy = await getEtsyData();
@@ -536,6 +559,7 @@ async function fetchOrders() {
       error.value = etsy.error ?? "无法获取店铺 ID，请确保在 Etsy 订单页打开";
       return;
     }
+    shopId.value = etsy.shopId;
 
     if (orderStateOptions.value.length === 0 && etsy.orderStates?.length) {
       orderStateOptions.value = orderStatesToOptions(etsy.orderStates);
@@ -576,6 +600,176 @@ async function fetchOrders() {
 function onNoteInput(row: OrderImageExportRow, event: Event) {
   const el = event.currentTarget as HTMLElement | null;
   row.noteText = el?.innerText ?? "";
+  if (hasMultiImageRemark(row.noteText)) {
+    clearRowInvalidState(row);
+  }
+}
+
+/** 把输入值收敛为 >=1 的整数，非法值回落到默认 1 */
+function clampExpectedImageCount(value: unknown): number {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_EXPECTED_IMAGE_COUNT;
+  return Math.min(parsed, MAX_EXPECTED_IMAGE_COUNT);
+}
+
+function getExpectedImageCount(row: OrderImageExportRow): number {
+  return clampExpectedImageCount(row.expectedImageCount);
+}
+
+function onExpectedImageCountInput(row: OrderImageExportRow, event: Event) {
+  const el = event.currentTarget as HTMLInputElement | null;
+  if (!el) return;
+  const raw = el.value.trim();
+  row.expectedImageCount = raw ? clampExpectedImageCount(raw) : DEFAULT_EXPECTED_IMAGE_COUNT;
+  if (getExpectedImageCount(row) === DEFAULT_EXPECTED_IMAGE_COUNT) {
+    clearRowInvalidState(row);
+  }
+}
+
+/** 失焦时把输入框回写成归一化后的数字，避免留下空值或小数 */
+function normalizeExpectedImageCountInput(
+  row: OrderImageExportRow,
+  event: Event
+) {
+  const el = event.currentTarget as HTMLInputElement | null;
+  if (!el) return;
+  const next = getExpectedImageCount(row);
+  row.expectedImageCount = next;
+  el.value = String(next);
+}
+
+/** 备注里是否写入了「多张生产图备注」固定字段（忽略空白与冒号全/半角） */
+function hasMultiImageRemark(noteText: string): boolean {
+  return (noteText ?? "").replace(/\s+/g, "").includes(MULTI_IMAGE_REMARK_KEYWORD);
+}
+
+function clearRowInvalidState(row: OrderImageExportRow): void {
+  if (!invalidRowKeys.value.has(row.rowKey)) return;
+  const next = new Set(invalidRowKeys.value);
+  next.delete(row.rowKey);
+  invalidRowKeys.value = next;
+  if (next.size === 0) validationMessage.value = null;
+}
+
+/** 生产图数量 >1 但备注缺少固定字段的行 */
+function findRowsMissingMultiImageRemark(
+  data: OrderImageExportRow[]
+): OrderImageExportRow[] {
+  return data.filter(
+    (row) =>
+      getExpectedImageCount(row) !== DEFAULT_EXPECTED_IMAGE_COUNT &&
+      !hasMultiImageRemark(row.noteText)
+  );
+}
+
+function buildMissingRemarkMessage(rows: OrderImageExportRow[]): string {
+  const preview = rows
+    .slice(0, 5)
+    .map(
+      (row) =>
+        `订单 ${row.orderId} 第 ${row.transactionIndex} 项（SKU: ${getExportSku(row)}）`
+    )
+    .join("、");
+  const more = rows.length > 5 ? ` 等 ${rows.length} 项` : "";
+  return `生产图数量不是 1 的商品，备注里必须写「${MULTI_IMAGE_REMARK_KEYWORD}：」说明：${preview}${more}。请在备注中补充后再下载。`;
+}
+
+/** 下载前校验，未通过时写入提示并返回 false */
+function validateBeforeDownload(data: OrderImageExportRow[]): boolean {
+  const missingRows = findRowsMissingMultiImageRemark(data);
+  if (missingRows.length === 0) {
+    validationMessage.value = null;
+    invalidRowKeys.value = new Set();
+    return true;
+  }
+  invalidRowKeys.value = new Set(missingRows.map((row) => row.rowKey));
+  validationMessage.value = buildMissingRemarkMessage(missingRows);
+  return false;
+}
+
+/**
+ * 组装上报接口请求体：
+ * 仅包含生产图数量不为 1 的商品（数量为 1 的走默认逻辑，无需上报）；
+ * itemIndex 取行内商品序号，expectedImageCount 取该行填写的数量，
+ * remark 取该订单下这些商品备注（去重后拼接）。
+ */
+function buildExpectedImageCountsParams(
+  data: OrderImageExportRow[]
+): ProductionArtExpectedImageCountsParams | null {
+  const shopCode = shopId.value != null ? String(shopId.value) : "";
+  if (!shopCode) return null;
+
+  const orderMap = new Map<number, ProductionArtExpectedImageCountOrder>();
+  const notesByOrder = new Map<number, Set<string>>();
+
+  for (const row of data) {
+    const expectedImageCount = getExpectedImageCount(row);
+    if (expectedImageCount === DEFAULT_EXPECTED_IMAGE_COUNT) continue;
+
+    let order = orderMap.get(row.orderId);
+    if (!order) {
+      order = { platformOrderId: String(row.orderId), items: [] };
+      orderMap.set(row.orderId, order);
+    }
+    order.items.push({
+      itemIndex: row.transactionIndex,
+      expectedImageCount,
+    });
+
+    const noteText = row.noteText.trim();
+    if (noteText) {
+      const notes = notesByOrder.get(row.orderId) ?? new Set<string>();
+      notes.add(noteText);
+      notesByOrder.set(row.orderId, notes);
+    }
+  }
+
+  if (orderMap.size === 0) return null;
+
+  for (const order of orderMap.values()) {
+    const notes = notesByOrder.get(Number(order.platformOrderId));
+    if (notes && notes.size > 0) {
+      order.remark = Array.from(notes).join("；");
+    }
+  }
+
+  return {
+    sourceSystem: "ETSY",
+    shopCode,
+    orders: Array.from(orderMap.values()),
+  };
+}
+
+/**
+ * 下载完成后上报生产图数量。
+ * 只上报数量不为 1 的商品；全部为 1 时不发请求。
+ * 上报失败不影响已经下载的 ZIP，只把结果拼到导出提示里。
+ */
+async function reportExpectedImageCounts(
+  data: OrderImageExportRow[]
+): Promise<string> {
+  const hasMultiImageRow = data.some(
+    (row) => getExpectedImageCount(row) !== DEFAULT_EXPECTED_IMAGE_COUNT
+  );
+  if (!hasMultiImageRow) {
+    console.info("[生产图数量] 选中商品均为 1 张，跳过上报");
+    return "";
+  }
+
+  const params = buildExpectedImageCountsParams(data);
+  if (!params) {
+    return "；未获取到店铺 ID，生产图数量未上报";
+  }
+  try {
+    console.info("[生产图数量] 上报请求 POST /order/production-art/expected-image-counts", params);
+    const response = await submitProductionArtExpectedImageCountsViaProxy(params);
+    console.info("[生产图数量] 上报响应", response);
+    return "；生产图数量已上报";
+  } catch (err) {
+    console.error("[生产图数量] 上报失败", err);
+    const message = err instanceof Error ? err.message : String(err);
+    return `；生产图数量上报失败：${message}`;
+  }
 }
 
 function buildFailedImageReport(failures: ImageDownloadFailure[]): string {
@@ -595,6 +789,9 @@ function buildFailedImageReport(failures: ImageDownloadFailure[]): string {
 async function downloadSelected(saveToDisk = true): Promise<Blob | null> {
   const data = selectedRows.value;
   if (data.length === 0 || downloading.value) return null;
+
+  // 生产图数量 >1 时，备注 txt 必须包含「多张生产图备注」，否则拦截下载
+  if (!validateBeforeDownload(data)) return null;
 
   downloading.value = true;
   error.value = null;
@@ -649,6 +846,13 @@ async function downloadSelected(saveToDisk = true): Promise<Blob | null> {
       )
     ) {
       return null;
+    }
+
+    // 先上报生产图数量，再触发图片下载与 ZIP 打包
+    let reportSuffix = "";
+    if (saveToDisk) {
+      downloadStage.value = "上报生产图数量...";
+      reportSuffix = await reportExpectedImageCounts(data);
     }
 
     const failedDownloads: ImageDownloadFailure[] = [];
@@ -711,10 +915,11 @@ async function downloadSelected(saveToDisk = true): Promise<Blob | null> {
       a.click();
       URL.revokeObjectURL(a.href);
     }
-    exportNotice.value =
+    const notice =
       failedDownloads.length > 0
         ? `已导出，${failedDownloads.length} 张图片失败，详情见 ZIP 内 下载失败.txt`
         : "导出完成";
+    exportNotice.value = notice + reportSuffix;
     return blob;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "订单图片导出失败";
@@ -841,12 +1046,23 @@ onMounted(() => {
                     </span>
                   </span>
                 </th>
+                <th class="col-expected-count">
+                  <span class="header-help-wrap">
+                    生产图需要数量
+                    <span class="help-icon" aria-label="生产图需要数量说明">?</span>
+                    <span
+                      class="header-help-tooltip header-help-tooltip-right header-help-tooltip-wide"
+                    >
+                      如果通过 kst 美工任务进行生产图制作，此商品客户需要多少张生产图做预览，就填写多少。
+                    </span>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
               <template v-for="group in groups" :key="group.orderId">
                 <tr class="group-row">
-                  <td colspan="6">
+                  <td colspan="7">
                     <div class="group-bar">
                       <button
                         type="button"
@@ -919,6 +1135,7 @@ onMounted(() => {
                   :key="row.rowKey"
                   :class="{
                     'row-disabled': !hasSku(row),
+                    'row-invalid': invalidRowKeys.has(row.rowKey),
                     'group-last-row': rowIndex === group.rows.length - 1,
                   }"
                 >
@@ -1123,15 +1340,49 @@ onMounted(() => {
                       v-initial-text="row.noteText"
                       class="note-editor"
                       contenteditable="true"
-                      data-placeholder="输入个性化备注"
+                      :data-placeholder="
+                        getExpectedImageCount(row) !== 1
+                          ? '输入备注，并写「多张生产图备注：」'
+                          : '输入个性化备注'
+                      "
                       @input="onNoteInput(row, $event)"
                     />
+                  </td>
+                  <td class="expected-count-cell">
+                    <input
+                      class="count-input"
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputmode="numeric"
+                      :value="row.expectedImageCount"
+                      :disabled="downloading || syncing"
+                      :aria-label="`订单 ${row.orderId} 第 ${row.transactionIndex} 项生产图需要数量`"
+                      @input="onExpectedImageCountInput(row, $event)"
+                      @blur="normalizeExpectedImageCountInput(row, $event)"
+                      @keydown.enter.prevent="
+                        normalizeExpectedImageCountInput(row, $event)
+                      "
+                    />
+                    <div
+                      v-if="
+                        getExpectedImageCount(row) !== 1 &&
+                        !hasMultiImageRemark(row.noteText)
+                      "
+                      class="count-warn"
+                    >
+                      备注需写「多张生产图备注：」
+                    </div>
                   </td>
                 </tr>
               </template>
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div v-if="validationMessage" class="modal-alert" role="alert">
+        {{ validationMessage }}
       </div>
 
       <div class="modal-footer">
@@ -1142,6 +1393,8 @@ onMounted(() => {
           </span>
         </div>
         <div class="footer-actions">
+          <!-- 暂时下线「同步图包到共享盘」入口，逻辑保留（syncArtworkPackage），需要时取消注释即可 -->
+          <!--
           <button
             type="button"
             class="btn-sync"
@@ -1150,6 +1403,7 @@ onMounted(() => {
           >
             {{ syncing ? "同步中..." : "同步图包到共享盘" }}
           </button>
+          -->
           <button
             type="button"
             class="btn-export"
@@ -1528,6 +1782,74 @@ onMounted(() => {
 .note-editor:empty::before {
   content: attr(data-placeholder);
   color: #9ca3af;
+}
+
+/* ===== 生产图需要数量 ===== */
+
+.col-expected-count {
+  width: 140px;
+}
+
+.header-help-tooltip-wide {
+  max-width: 300px;
+  white-space: normal;
+}
+
+.header-help-tooltip-right {
+  left: auto;
+  right: 0;
+}
+
+.expected-count-cell {
+  width: 140px;
+}
+
+.count-input {
+  width: 74px;
+  padding: 6px 8px;
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.3;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.count-input:focus {
+  border-color: #3b82f6;
+  outline: none;
+  box-shadow: 0 0 0 1px #3b82f6;
+}
+
+.count-input:disabled {
+  color: #9ca3af;
+  background: #f9fafb;
+}
+
+.count-warn {
+  margin-top: 4px;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.row-invalid td {
+  background: #fef2f2;
+}
+
+.row-invalid .note-editor {
+  border-color: #fca5a5;
+}
+
+.modal-alert {
+  padding: 10px 20px;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-line;
+  background: #fef2f2;
+  border-top: 1px solid #fecaca;
 }
 
 .modal-footer {
