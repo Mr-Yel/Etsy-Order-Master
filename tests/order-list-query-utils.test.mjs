@@ -9,9 +9,10 @@ import {
 } from "../lib/order-list-query-utils.mjs";
 
 test("normalizes order page size to the allowed dropdown values", () => {
-  assert.deepEqual(ORDER_PAGE_SIZE_OPTIONS, [10, 20, 50, 100]);
+  assert.deepEqual(ORDER_PAGE_SIZE_OPTIONS, [10, 20, 50]);
   assert.equal(normalizeOrderPageSize(10), 10);
   assert.equal(normalizeOrderPageSize("50"), 50);
+  assert.equal(normalizeOrderPageSize(100), 20);
   assert.equal(normalizeOrderPageSize(999), 20);
   assert.equal(normalizeOrderPageSize("bad"), 20);
 });

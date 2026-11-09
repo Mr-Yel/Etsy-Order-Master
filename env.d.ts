@@ -46,7 +46,7 @@ declare module "@/lib/kst-ship-by-date-sync-utils.mjs" {
 }
 
 declare module "@/lib/order-list-query-utils.mjs" {
-  export const ORDER_PAGE_SIZE_OPTIONS: readonly [10, 20, 50, 100];
+  export const ORDER_PAGE_SIZE_OPTIONS: readonly [10, 20, 50];
   export function normalizeOrderPageSize(
     value: unknown,
     fallback?: number

@@ -39,6 +39,8 @@ const selectedOrderStateId = ref<number | "">("");
 const pageSize = ref(20);
 const currentPage = ref(1);
 const searchTerms = ref("");
+/** 最近一次实际请求使用的搜索词，用于展示「搜索范围」提示 */
+const appliedSearchTerms = ref("");
 const totalOrders = ref<number | null>(null);
 const isSyncingToKst = ref(false);
 
@@ -78,6 +80,79 @@ const groupedRowMeta = computed(() => {
     };
   });
 });
+
+type RowGroupRow = { row: ExportTableRow; index: number };
+type RowGroup = {
+  groupIndex: number;
+  orderId: string;
+  rows: RowGroupRow[];
+};
+
+/**
+ * 纯展示用的行分组：把连续同 Order ID 的行归到一组，用于多行订单的折叠展示。
+ * 每一项都保留原始 rows 下标，勾选 / 导出 / 同步仍以下标为准，逻辑不受影响。
+ */
+const rowGroups = computed<RowGroup[]>(() => {
+  const groups: RowGroup[] = [];
+
+  rows.value.forEach((row, index) => {
+    const meta = groupedRowMeta.value[index];
+    const groupIndex = meta?.groupIndex ?? index;
+    const last = groups[groups.length - 1];
+
+    if (!last || last.groupIndex !== groupIndex) {
+      groups.push({
+        groupIndex,
+        orderId: String(row["Order ID"] ?? ""),
+        rows: [],
+      });
+    }
+
+    groups[groups.length - 1].rows.push({ row, index });
+  });
+
+  return groups;
+});
+
+/** 折叠的多行订单（按 groupIndex 记录），仅影响展示 */
+const collapsedGroups = ref<Set<number>>(new Set());
+
+function isGroupCollapsed(groupIndex: number): boolean {
+  return collapsedGroups.value.has(groupIndex);
+}
+
+function toggleGroupCollapse(groupIndex: number) {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(groupIndex)) next.delete(groupIndex);
+  else next.add(groupIndex);
+  collapsedGroups.value = next;
+}
+
+/** 组内已选行数（仍按行下标统计，与明细行勾选口径一致） */
+function getGroupSelectedCount(group: RowGroup): number {
+  return group.rows.reduce(
+    (count, item) => (selected.value.has(item.index) ? count + 1 : count),
+    0
+  );
+}
+
+function isGroupAllSelected(group: RowGroup): boolean {
+  return (
+    group.rows.length > 0 &&
+    getGroupSelectedCount(group) === group.rows.length
+  );
+}
+
+/** 组头勾选 = 批量切换该组所有明细行的下标，不改变导出/同步口径 */
+function toggleGroupSelection(group: RowGroup) {
+  const next = new Set(selected.value);
+  if (isGroupAllSelected(group)) {
+    group.rows.forEach((item) => next.delete(item.index));
+  } else {
+    group.rows.forEach((item) => next.add(item.index));
+  }
+  selected.value = next;
+}
 
 const isAllSelected = computed(() => {
   if (rows.value.length === 0) return false;
@@ -148,12 +223,12 @@ async function fetchOrders(options?: {
 
     const { orders: orderList, buyers, totalSearchHitCount, totalCount } =
       await fetchEtsyOrdersPage(
-      etsy.shopId,
-      baseParams,
-      pageSize.value,
-      getOrderPageOffset(currentPage.value, pageSize.value),
-      { credentials: "include" }
-    );
+        etsy.shopId,
+        baseParams,
+        pageSize.value,
+        getOrderPageOffset(currentPage.value, pageSize.value),
+        { credentials: "include" }
+      );
 
     // 暂时停用详情接口，只使用列表接口数据生成表格。
     // 如需恢复 Card Processing Fees，可重新启用 earnings details 请求并传入 earningsByOrderId。
@@ -188,6 +263,9 @@ async function fetchOrders(options?: {
       buyers as Parameters<typeof mapOrdersToTableRows>[1],
       { shopId: etsy.shopId }
     );
+    // 换页/换筛选后行分组已变，折叠状态一并重置（仅展示态）
+    collapsedGroups.value = new Set();
+    appliedSearchTerms.value = searchText;
     totalOrders.value = totalSearchHitCount ?? totalCount ?? orderList.length;
 
     if (totalPages.value != null && currentPage.value > totalPages.value) {
@@ -214,9 +292,8 @@ function changePageSize() {
 }
 
 function applySearch() {
-  if (searchTerms.value.trim()) {
-    selectedOrderStateId.value = "";
-  }
+  // 搜索仍走 Etsy 的全店范围（接口在带 search_terms 时会忽略 order_state 过滤），
+  // 但不再静默清空状态下拉；实际生效范围由输入框旁的「搜索范围」提示说明。
   void fetchOrders({ resetPage: true, clearSelection: true });
 }
 
@@ -280,7 +357,7 @@ async function syncSelectedToKst() {
       return;
     }
 
-    await syncOrdersToKst({
+    const synced = await syncOrdersToKst({
       shopId: etsy.shopId,
       rows: data,
       logContext: {
@@ -288,6 +365,8 @@ async function syncSelectedToKst() {
         pageUrl: location.href,
       },
     });
+    // 同步成功即关闭弹窗，结果由全局提示告知
+    if (synced) close();
   } catch (e) {
     console.error("[KST] 同步到 KST 失败", e);
     const msg = e instanceof Error ? e.message : "同步失败，请重试";
@@ -381,6 +460,7 @@ onMounted(() => {
               placeholder="输入订单号"
               :disabled="loading"
               @keydown.enter.prevent="applySearch"
+              @search="applySearch"
             />
             <button
               type="button"
@@ -390,6 +470,9 @@ onMounted(() => {
             >
               搜索
             </button>
+            <span v-if="appliedSearchTerms" class="search-scope-hint">
+              搜索范围：全部状态
+            </span>
           </div>
           <div class="pagination-wrap">
             <button
@@ -456,26 +539,87 @@ onMounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="(row, i) in rows"
-                :key="i"
-                :class="[
-                  'table-row',
-                  groupedRowMeta[i]?.groupIndex % 2 === 0 ? 'table-row-group-even' : 'table-row-group-odd',
-                  { 'table-row-group-start': groupedRowMeta[i]?.isGroupStart },
-                ]"
-              >
-                <td class="col-check">
-                  <input
-                    type="checkbox"
-                    :checked="selected.has(i)"
-                    @change="toggleRow(i)"
-                  />
-                </td>
-                <td v-for="col in columns" :key="col" class="col-data">
-                  {{ row[col] }}
-                </td>
-              </tr>
+              <template v-for="group in rowGroups" :key="group.groupIndex">
+                <tr v-if="group.rows.length > 1" class="table-group-row">
+                  <td :colspan="columns.length + 1">
+                    <div class="table-group-bar">
+                      <div class="table-group-bar-inner">
+                        <button
+                          type="button"
+                          class="table-group-toggle"
+                          :class="{ 'is-collapsed': isGroupCollapsed(group.groupIndex) }"
+                          :aria-expanded="!isGroupCollapsed(group.groupIndex)"
+                          :title="
+                            isGroupCollapsed(group.groupIndex)
+                              ? '展开该订单'
+                              : '收起该订单'
+                          "
+                          @click="toggleGroupCollapse(group.groupIndex)"
+                        >
+                          <svg
+                            viewBox="0 0 12 12"
+                            width="12"
+                            height="12"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M2 4.2l4 4 4-4" />
+                          </svg>
+                        </button>
+                        <input
+                          type="checkbox"
+                          class="table-group-check"
+                          :checked="isGroupAllSelected(group)"
+                          :indeterminate="
+                            getGroupSelectedCount(group) > 0 &&
+                            !isGroupAllSelected(group)
+                          "
+                          :aria-label="`勾选订单 ${group.orderId} 的全部明细`"
+                          @change="toggleGroupSelection(group)"
+                        />
+                        <span class="table-group-order">订单 {{ group.orderId }}</span>
+                        <span class="table-group-count">
+                          {{ group.rows.length }} 项
+                        </span>
+                        <span
+                          v-if="getGroupSelectedCount(group) > 0"
+                          class="table-group-selected"
+                        >
+                          已选 {{ getGroupSelectedCount(group) }}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                <tr
+                  v-for="item in group.rows"
+                  v-show="group.rows.length === 1 || !isGroupCollapsed(group.groupIndex)"
+                  :key="item.index"
+                  :class="[
+                    'table-row',
+                    groupedRowMeta[item.index]?.groupIndex % 2 === 0 ? 'table-row-group-even' : 'table-row-group-odd',
+                    {
+                      'table-row-group-start': group.rows.length === 1 && groupedRowMeta[item.index]?.isGroupStart,
+                      'table-row-child': group.rows.length > 1,
+                    },
+                  ]"
+                >
+                  <td class="col-check">
+                    <input
+                      type="checkbox"
+                      :checked="selected.has(item.index)"
+                      @change="toggleRow(item.index)"
+                    />
+                  </td>
+                  <td v-for="col in columns" :key="col" class="col-data">
+                    {{ item.row[col] }}
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -632,6 +776,16 @@ onMounted(() => {
   color: #6b7280;
 }
 
+.search-scope-hint {
+  font-size: 12px;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
 .search-input {
   width: 160px;
   padding: 6px 8px;
@@ -767,6 +921,108 @@ onMounted(() => {
 
 .table-row-group-start td {
   border-top: 2px solid #cbd5e1;
+}
+
+/* 多行订单的折叠组头：整行铺满，文字在横向滚动时吸附在左侧 */
+.table-group-row td {
+  padding: 0;
+  border-bottom: 1px solid #dfe7f2;
+  background: transparent;
+}
+
+.table-group-bar {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  background: #f2f6fc;
+  border-left: 3px solid #4a86c8;
+  box-shadow: inset 0 -1px 0 #dde7f4;
+  font-size: 13px;
+}
+
+.table-group-bar-inner {
+  position: sticky;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+}
+
+/* 归属该订单的明细行：整体右移，并用左侧竖线连成归属轨道 */
+.table-row.table-row-child > td {
+  background: #fbfdff;
+}
+
+.table-row-child > td:first-child {
+  padding-left: 24px;
+  text-align: left;
+  box-shadow: inset 3px 0 0 #dfe8f5;
+}
+
+.table-row.table-row-child:hover > td {
+  background: #f4f9ff;
+}
+
+.table-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  padding: 0;
+  color: #4a86c8;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.table-group-toggle:hover {
+  background: #dfeaf8;
+}
+
+.table-group-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.table-group-toggle.is-collapsed svg {
+  transform: rotate(-90deg);
+}
+
+.table-group-order {
+  font-weight: 600;
+  color: #1f3f66;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.table-group-check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.table-group-selected {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.table-group-count {
+  color: #475569;
+  background: #e4ecf7;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .table th {

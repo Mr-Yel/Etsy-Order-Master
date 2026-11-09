@@ -123,8 +123,16 @@ export async function fetchEtsyOrdersPage(
   }
   const data = (await res.json()) as EtsyOrdersSearchResponse;
   const collection = data?.orders_search;
+  const orders = collection?.orders ?? [];
+  if (orders.length < limit) {
+    console.warn("[EOM] 服务端返回订单数少于请求的 limit", {
+      requested: limit,
+      received: orders.length,
+      offset,
+    });
+  }
   return {
-    orders: collection?.orders ?? [],
+    orders,
     buyers: collection?.buyers ?? [],
     totalCount: collection?.total_count,
     totalSearchHitCount: collection?.total_search_hit_count,

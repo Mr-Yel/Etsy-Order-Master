@@ -123,7 +123,7 @@ export const syncOrdersToKst = async ({
   rows,
   platformType = DEFAULT_PLATFORM_TYPE,
   logContext,
-}: SyncOrdersToKstParams): Promise<void> => {
+}: SyncOrdersToKstParams): Promise<boolean> => {
   const traceId = `${logContext?.requestId ?? logContext?.source ?? "sync"}#${++syncInvocationCounter}`;
   traceLog("kst.syncOrdersToKst.enter", {
     traceId,
@@ -135,7 +135,7 @@ export const syncOrdersToKst = async ({
   });
   if (!rows.length) {
     getNotyf().error("请先选择要同步的订单");
-    return;
+    return false;
   }
 
   const token = await getToken();
@@ -151,7 +151,7 @@ export const syncOrdersToKst = async ({
       },
       logContext?.source ?? "kst_sync"
     );
-    return;
+    return false;
   }
 
   const allIds = collectOrderIds(rows);
@@ -162,7 +162,7 @@ export const syncOrdersToKst = async ({
   });
   if (!allIds.length) {
     getNotyf().error("选中订单中没有有效的 Order ID");
-    return;
+    return false;
   }
 
   let ownerUserId: number | undefined;
@@ -259,7 +259,7 @@ export const syncOrdersToKst = async ({
       },
       logContext?.source ?? "kst_sync"
     );
-    return;
+    return false;
   }
 
   const orderIdsToImport = collectOrderIds(rowsToSync);
@@ -334,7 +334,7 @@ export const syncOrdersToKst = async ({
         },
         logContext?.source ?? "kst_sync"
       );
-      return;
+      return false;
     }
 
     const confirmedOrderIdSet = new Set(confirmedOrderIds);
@@ -375,17 +375,18 @@ export const syncOrdersToKst = async ({
       getNotyf().error(
         "导入请求已完成，但暂未在 KST 查到订单，未写入本地缓存"
       );
-      return;
+      return false;
     }
 
     if (unconfirmedOrderIds.length > 0) {
       getNotyf().success(
         `已确认 ${confirmedOrderIds.length} 条订单进入 KST，另有 ${unconfirmedOrderIds.length} 条未确认，未写入缓存`
       );
-      return;
+      return true;
     }
 
     getNotyf().success(`已确认同步 ${confirmedOrderIds.length} 条订单到 KST`);
+    return true;
   } catch (error) {
     const msg =
       error instanceof Error ? error.message : "同步到 KST 失败，请重试";
@@ -407,5 +408,6 @@ export const syncOrdersToKst = async ({
       },
       logContext?.source ?? "kst_sync"
     );
+    return false;
   }
 };
