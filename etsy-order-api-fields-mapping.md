@@ -2,7 +2,7 @@
 
 对照导出目标系统的表格字段，记录各接口返回值与导出表字段的对应关系。仅用于接口数据 → 表格字段的映射，不涉及 DOM。
 
-**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Transaction ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Ship Date, Latest Ship Date, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU, Item Name。
+**导出目标字段**（以实际导入系统为准）：Sale Date, Order ID, Transaction ID, Buyer User ID, Full Name, First Name, Last Name, Number of Items, Payment Method, Ship Date, Latest Ship Date, Street 1, Ship City, Ship State, Ship Zipcode, Ship Country, Ship Phone Number, Currency, Order Value, Coupon Code, Coupon Details, Discount Amount, Shipping Discount, Shipping, Sales Tax, Order Total, Card Processing Fees, Order Net, Adjusted Order Total, Adjusted Card Processing Fees, Adjusted Net Order Amount, Buyer, Order Type, Payment Type, SKU, Item Name。
 
 **SKU**：以列表接口 `transactions[].product.product_identifier` 的值为准（业务侧若存在另一套 SKU 由下游处理，导出取 Etsy 列表值）。
 
@@ -47,6 +47,7 @@
 | Ship State | 能 | `orders[].fulfillment.to_address.state` |
 | Ship Zipcode | 能 | `orders[].fulfillment.to_address.zip` |
 | Ship Country | 能 | `orders[].fulfillment.to_address.country` |
+| Ship Phone Number | 能 | `orders[].fulfillment.to_address.phone`（收货人电话，如 "07850958248"）；缺失时导出空字符串 |
 | Currency | 能 | `orders[].payment.cost_breakdown.total_cost.currency_code`（如 "USD"） |
 | Order Value | 能 | `orders[].payment.cost_breakdown.items_cost.value` ÷ 100（或 transactions 金额汇总） |
 | Coupon Code | 能 | `orders[].payment.sellermarketing_coupons[0].code`，订单维度字段；当前展示/导出按 **一行一个 transaction**，同一订单拆出的每一行重复该值 |
