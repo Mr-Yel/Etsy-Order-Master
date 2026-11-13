@@ -6,6 +6,8 @@ export type EtsyImageFetchProxyRequest = {
   urls: string[];
   timeoutMs?: number;
   concurrency?: number;
+  /** 排查用：链路标识，由调用方透传 */
+  trace?: string;
 };
 
 export type EtsyImageFetchProxyFailure = {

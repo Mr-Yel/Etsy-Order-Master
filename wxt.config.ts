@@ -121,7 +121,7 @@ export default defineConfig({
         ? "Etsy订单管理工具（测试环境）"
         : "Etsy订单管理工具",
     // 权限配置
-    permissions: ['storage', 'tabs'],
+    permissions: ['storage', 'tabs', 'offscreen'],
     host_permissions: [
       '*://*.etsy.com/*',
       'https://i.etsystatic.com/*',
@@ -141,7 +141,8 @@ export default defineConfig({
     
     // Content Security Policy
     content_security_policy: {
-      extension_pages: "script-src 'self'; object-src 'self'; frame-src 'self'; child-src 'self'",
+      extension_pages:
+        "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; frame-src 'self'; child-src 'self'; worker-src 'self'",
     },
   }),
 });

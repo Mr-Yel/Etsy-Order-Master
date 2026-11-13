@@ -20,6 +20,10 @@ export type LimitedJobProgress<T> = {
 export type LimitedJobOptions<T> = {
   concurrency?: number;
   onProgress?: (progress: LimitedJobProgress<T>) => void;
+  /** 返回 true 时新任务不再取出，用于 fail-fast */
+  isAborted?: () => boolean;
+  /** 透传给 worker，用于取消仍在进行的请求 */
+  signal?: AbortSignal;
 };
 
 export type RetryOptions = {
@@ -36,6 +40,10 @@ export function runWithRetry<T>(
 ): Promise<T>;
 export function runLimitedJobs<TItem, TResult>(
   items: TItem[],
-  worker: (item: TItem, index: number) => Promise<TResult>,
+  worker: (
+    item: TItem,
+    index: number,
+    signal?: AbortSignal
+  ) => Promise<TResult>,
   options?: LimitedJobOptions<TResult>
 ): Promise<LimitedJobResult<TResult>[]>;

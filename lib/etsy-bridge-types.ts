@@ -120,6 +120,8 @@ export type EtsyImagesFetchPayload = {
   urls: string[];
   timeoutMs?: number;
   concurrency?: number;
+  /** 排查用：贯穿页面 / content / service worker 的链路标识，不参与业务逻辑 */
+  trace?: string;
 };
 
 export type EtsyImageFetchFailure = {
