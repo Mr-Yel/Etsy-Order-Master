@@ -440,68 +440,196 @@
   }
 
   /**
+   * 承运商文本归一化：NFKC（全角转半角）+ 不换行空格/全角空格归一 + 折叠连续空白 + trim + 小写
+   * 例：「 china  post 」与 "China Post" 视为同一项
+   */
+  function normalizeCarrierText(value) {
+    var text = value == null ? "" : String(value);
+    try {
+      text = text.normalize("NFKC");
+    } catch (e) {
+      // 老内核没有 normalize，退化为原串
+    }
+    return text
+      .replace(/[\u00a0\u3000]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
+  /**
+   * 用原型链上的原生 setter 写值，并重置 React 的 valueTracker。
+   * 直接 el.value = x 会被 tracker 判定为「值没变」，导致 onChange 不触发。
+   */
+  function setNativeValue(element, value) {
+    var proto =
+      element instanceof HTMLSelectElement
+        ? HTMLSelectElement.prototype
+        : element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+    var descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+    var previous = element.value;
+
+    if (descriptor && typeof descriptor.set === "function") {
+      descriptor.set.call(element, value);
+    } else {
+      element.value = value;
+    }
+
+    var tracker = element._valueTracker;
+    if (tracker && typeof tracker.setValue === "function") {
+      tracker.setValue(previous);
+    }
+  }
+
+  /**
+   * clg-text-input 这类自定义元素：真实可编辑节点在内部（light DOM 或 open shadow root）
+   */
+  function resolveEditableElement(host) {
+    if (!host) return null;
+    if (host instanceof HTMLInputElement || host instanceof HTMLTextAreaElement) {
+      return host;
+    }
+
+    var inner = null;
+    try {
+      if (host.shadowRoot) {
+        inner = host.shadowRoot.querySelector("input, textarea");
+      }
+    } catch (e) {
+      inner = null;
+    }
+    if (!inner && typeof host.querySelector === "function") {
+      inner = host.querySelector("input, textarea");
+    }
+    return inner || null;
+  }
+
+  /**
+   * 派发一套让 React / 自定义元素都能识别的值变更事件
+   */
+  function dispatchValueEvents(element, value) {
+    try {
+      element.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          composed: true,
+          inputType: "insertText",
+          data: value,
+        })
+      );
+    } catch (e) {
+      element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    }
+    element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+  }
+
+  /**
    * 在主世界中修改 select 下拉框的选中选项
-   * 这样可以确保事件能被页面主世界的监听器捕获
+   * 匹配规则：归一化后忽略大小写与首尾/多余空格；都不命中则回落到 Other（value="-1"）
    */
   function changeSelectOptionInMainWorld(orderNumber, optionValue) {
     try {
-      const selectElement = document.getElementsByName(`carrierNameSelect-${orderNumber}`)[0];
-      
+      var selectElement = document.getElementsByName(
+        "carrierNameSelect-" + orderNumber
+      )[0];
+
       if (!selectElement) {
         return { success: false, error: "未找到 select 元素" };
       }
 
-      const options = selectElement.options;
-      
-      // 遍历所有选项，按文本不区分大小写匹配
-      for (let i = 0; i < options.length; i++) {
-        if (options[i].text.toLowerCase() === optionValue.toLowerCase()) {
-          // 设置值
-          selectElement.value = options[i].value;
-          
-          // 在主世界中触发事件，确保能被页面监听器捕获
-          // 使用多种事件类型确保兼容性
-          const changeEvent = new Event("change", { bubbles: true, cancelable: true });
-          selectElement.dispatchEvent(changeEvent);
-          
-          // 也触发 input 事件（某些框架可能需要）
-          const inputEvent = new Event("input", { bubbles: true, cancelable: true });
-          selectElement.dispatchEvent(inputEvent);
-          
-          return { success: true, value: options[i].value };
+      var targetText = normalizeCarrierText(optionValue);
+      if (!targetText) {
+        return { success: false, error: "承运商为空" };
+      }
+
+      var options = selectElement.options;
+      var matchedOption = null;
+      var otherOption = null;
+
+      for (var i = 0; i < options.length; i++) {
+        var option = options[i];
+        if (option.value === "-1") {
+          otherOption = option;
+          continue;
+        }
+        if (!matchedOption && normalizeCarrierText(option.text) === targetText) {
+          matchedOption = option;
         }
       }
-      
-      return { success: false, error: "未找到匹配的选项" };
+
+      var target = matchedOption || otherOption;
+      if (!target) {
+        return { success: false, error: "未找到匹配项，也没有 Other 可选" };
+      }
+
+      // 必须用原生 setter，否则 React 认为值未变化，不触发 onChange
+      setNativeValue(selectElement, target.value);
+      selectElement.dispatchEvent(
+        new Event("change", { bubbles: true, composed: true })
+      );
+      selectElement.dispatchEvent(
+        new Event("input", { bubbles: true, composed: true })
+      );
+
+      return {
+        success: true,
+        value: selectElement.value,
+        text: target.text,
+        matched: !!matchedOption,
+        fallbackToOther: !matchedOption,
+      };
     } catch (error) {
       return { success: false, error: error.message || "未知错误" };
     }
   }
 
   /**
-   * 在主世界中修改 input 输入框的值
+   * 在主世界中修改输入框的值（兼容 clg-text-input 宿主元素），写入后回读校验
    */
   function changeInputValueInMainWorld(selector, value, triggerEvents) {
     try {
-      const input = document.querySelector(selector);
-      
-      if (!input) {
+      var host = document.querySelector(selector);
+
+      if (!host) {
         return { success: false, error: "未找到 input 元素" };
       }
 
-      // 设置值
-      input.value = value;
-
-      // 触发事件
-      if (triggerEvents !== false) {
-        const events = ["focus", "input", "change", "blur"];
-        events.forEach(eventType => {
-          const event = new Event(eventType, { bubbles: true, cancelable: true });
-          input.dispatchEvent(event);
-        });
+      // 宿主是自定义元素时，先写它的对外 value，再写内部真实 input
+      if (!(host instanceof HTMLInputElement) && !(host instanceof HTMLTextAreaElement)) {
+        try {
+          host.value = value;
+        } catch (e) {
+          // 宿主没有 value setter，忽略
+        }
       }
 
-      return { success: true };
+      var editable = resolveEditableElement(host);
+      if (editable) {
+        setNativeValue(editable, value);
+      } else if (host instanceof HTMLInputElement || host instanceof HTMLTextAreaElement) {
+        setNativeValue(host, value);
+        editable = host;
+      }
+
+      if (triggerEvents !== false) {
+        if (editable) {
+          dispatchValueEvents(editable, value);
+        }
+        if (editable !== host) {
+          dispatchValueEvents(host, value);
+        }
+      }
+
+      var readback = String((editable || host).value == null ? "" : (editable || host).value);
+
+      return {
+        success: true,
+        verified: readback === String(value),
+        readback: readback,
+      };
     } catch (error) {
       return { success: false, error: error.message || "未知错误" };
     }

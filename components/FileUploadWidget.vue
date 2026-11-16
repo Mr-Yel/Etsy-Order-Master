@@ -2,8 +2,11 @@
 import { ref } from "vue";
 import Papa from "papaparse";
 import {
-  changeSelectOption,
+  carrierNameSelector,
   changeInputValue,
+  changeSelectOption,
+  trackingSelector,
+  waitForElement,
 } from "@/utils/dom-utils";
 import { downloadCSVTemplate } from "@/utils/csv-utils";
 
@@ -14,13 +17,27 @@ type OrderData = {
   shippingCarrier: string;
 };
 
+type FillOutcome =
+  | {
+      kind: "filled";
+      carrier: "matched" | "other" | "none";
+      carrierText: string;
+    }
+  | { kind: "failed"; reason: string };
+
 const isOpen = ref(false);
 const selectedFile = ref<File | null>(null);
 const fileContent = ref<string>("");
 const parseError = ref<string>("");
 const parsedData = ref<OrderData[]>([]);
 const isProcessing = ref(false);
+const processedCount = ref(0);
+/** 承运商命中已有选项的订单 */
 const matchedOrders = ref<string[]>([]);
+/** 承运商匹配不到、回落 Other 并填入名称的订单 */
+const fallbackOrders = ref<{ orderNumber: string; carrier: string }[]>([]);
+/** 未写入的订单及原因 */
+const failedOrders = ref<{ orderNumber: string; reason: string }[]>([]);
 const matchCount = ref(0);
 
 const togglePanel = () => {
@@ -140,63 +157,142 @@ const parseCSV = (csvText: string) => {
 };
 
 /**
- * 填充表单字段（直接尝试，找不到就跳过）
+ * 填写单个订单：先运单号，再承运商；承运商匹配不到则回落 Other 并填写原值
  * 注意：page-inject.js 已在 content.ts 初始化时注入，无需重复注入
+ */
+const fillOrder = async (order: OrderData): Promise<FillOutcome> => {
+  const { orderNumber, trackingNumber, shippingCarrier } = order;
+  const hasTracking = Boolean(trackingNumber);
+  const hasCarrier = Boolean(shippingCarrier);
+
+  if (!hasTracking && !hasCarrier) {
+    return { kind: "failed", reason: "运单号与承运商都为空" };
+  }
+
+  // 1) 运单号先写，避免后续承运商变更引起的重渲染干扰
+  if (hasTracking) {
+    const result = await changeInputValue(
+      trackingSelector(orderNumber),
+      trackingNumber,
+      true
+    );
+    if (!result) {
+      return { kind: "failed", reason: "未找到该订单的运单号输入框" };
+    }
+    if (!result.verified) {
+      return {
+        kind: "failed",
+        reason: `运单号未写入（回读为 "${result.readback}"）`,
+      };
+    }
+  }
+
+  if (!hasCarrier) {
+    return { kind: "filled", carrier: "none", carrierText: "" };
+  }
+
+  // 2) 承运商：命中已有选项就选中，匹配不到由主世界回落到 Other(value=-1)
+  const selectResult = await changeSelectOption(orderNumber, shippingCarrier);
+  if (!selectResult) {
+    return { kind: "failed", reason: "未找到该订单的承运商下拉框" };
+  }
+
+  if (!selectResult.fallbackToOther) {
+    return { kind: "filled", carrier: "matched", carrierText: selectResult.text };
+  }
+
+  // 3) 选中 Other 后承运商名称输入框才渲染，需要等待它出现
+  const host = await waitForElement(carrierNameSelector(orderNumber));
+  if (!host) {
+    return { kind: "failed", reason: "选中 Other 后承运商名称输入框未出现" };
+  }
+
+  const nameResult = await changeInputValue(
+    carrierNameSelector(orderNumber),
+    shippingCarrier,
+    true
+  );
+  if (!nameResult) {
+    return { kind: "failed", reason: "承运商名称写入失败" };
+  }
+  if (!nameResult.verified) {
+    return {
+      kind: "failed",
+      reason: `承运商名称未写入（回读为 "${nameResult.readback}"）`,
+    };
+  }
+
+  return { kind: "filled", carrier: "other", carrierText: shippingCarrier };
+};
+
+/**
+ * 按 CSV 顺序串行填写所有订单
  */
 const fillFormFields = async (orderData: OrderData[]) => {
   isProcessing.value = true;
+  processedCount.value = 0;
   matchedOrders.value = [];
+  fallbackOrders.value = [];
+  failedOrders.value = [];
   matchCount.value = 0;
 
   console.log("\n" + "=".repeat(60));
   console.log("🚀 开始填充表单字段...");
   console.log("=".repeat(60));
 
-  // 遍历每个订单数据，直接尝试修改，找不到就跳过
   for (const order of orderData) {
-    const { orderNumber, trackingNumber, shippingCarrier } = order;
+    const orderNumber = order.orderNumber;
 
     if (!orderNumber) {
-      console.warn(`⚠️ 跳过空订单号的数据行`);
+      failedOrders.value.push({ orderNumber: "(空)", reason: "缺少订单号" });
+      processedCount.value += 1;
       continue;
     }
 
     try {
-      // 只按 name 定位，兼容原生 input 和 Etsy 新版自定义元素 clg-text-input
-      const inputSelector = `[name="trackingCode-${orderNumber}"]`;
+      const outcome = await fillOrder(order);
 
-      // 使用 await 等待 Promise 结果
-      const selectSuccess = await changeSelectOption(
-        orderNumber,
-        shippingCarrier
-      );
-      const inputSuccess = await changeInputValue(inputSelector, trackingNumber, true);
-
-      // 只要两个都成功才算匹配成功
-      if (selectSuccess && inputSuccess) {
-        matchedOrders.value.push(orderNumber);
-        matchCount.value++;
-        console.log(`✅ 订单 ${orderNumber} 填充成功`);
-      } else {
-        // 找不到元素，静默跳过（不输出警告，因为这是正常情况）
-        if (selectSuccess || inputSuccess) {
-          // 如果部分成功，输出提示
+      if (outcome.kind === "filled") {
+        if (outcome.carrier === "other") {
+          fallbackOrders.value.push({
+            orderNumber,
+            carrier: outcome.carrierText,
+          });
           console.log(
-            `⚠️ 订单 ${orderNumber} 部分填充 (select: ${selectSuccess}, input: ${inputSuccess})`
+            `🟡 订单 ${orderNumber}：承运商「${outcome.carrierText}」无匹配项，已选 Other 并填入名称`
           );
+        } else {
+          matchedOrders.value.push(orderNumber);
+          console.log(`✅ 订单 ${orderNumber} 填充成功`);
         }
+      } else {
+        failedOrders.value.push({ orderNumber, reason: outcome.reason });
+        console.warn(`❌ 订单 ${orderNumber} 未填充：${outcome.reason}`);
       }
     } catch (error) {
+      const reason = error instanceof Error ? error.message : "未知错误";
+      failedOrders.value.push({ orderNumber, reason });
       console.error(`❌ 处理订单 ${orderNumber} 时发生错误:`, error);
     }
+
+    processedCount.value += 1;
   }
 
+  matchCount.value = matchedOrders.value.length + fallbackOrders.value.length;
   isProcessing.value = false;
 
   console.log("\n" + "=".repeat(60));
   console.log("✅ 表单填充完成！");
-  console.log(`📊 成功匹配: ${matchCount.value}/${orderData.length} 个订单`);
-  console.log(`📋 匹配的订单号:`, matchedOrders.value);
+  console.log(`📊 已填写: ${matchCount.value}/${orderData.length} 个订单`);
+  console.log(`   · 承运商命中: ${matchedOrders.value.length}`);
+  console.log(`   · 回落 Other: ${fallbackOrders.value.length}`);
+  console.log(`   · 未填写: ${failedOrders.value.length}`);
+  if (fallbackOrders.value.length > 0) {
+    console.log("🟡 回落 Other 的订单:", fallbackOrders.value);
+  }
+  if (failedOrders.value.length > 0) {
+    console.warn("❌ 未填写的订单:", failedOrders.value);
+  }
   console.log("=".repeat(60));
 };
 
@@ -206,7 +302,10 @@ const clearFile = () => {
   parseError.value = "";
   parsedData.value = [];
   matchedOrders.value = [];
+  fallbackOrders.value = [];
+  failedOrders.value = [];
   matchCount.value = 0;
+  processedCount.value = 0;
   isProcessing.value = false;
   const input = document.querySelector(
     'input[type="file"]'
@@ -335,45 +434,77 @@ const handleDownloadTemplate = () => {
         <!-- 处理中提示 -->
         <div v-if="isProcessing" class="processing-message">
           <strong>⏳ 正在填充表单...</strong>
-          <span>请稍候</span>
+          <span>
+            已处理 {{ processedCount }} / {{ parsedData.length }} 个订单
+          </span>
         </div>
 
-        <!-- 匹配结果 -->
+        <!-- 填写结果 -->
         <div
           v-if="!isProcessing && parsedData.length > 0 && !parseError"
           :class="[
             'match-result',
-            matchCount === 0 ? 'match-result-empty' : ''
+            matchCount === 0 ? 'match-result-empty' : '',
+            failedOrders.length > 0 ? 'match-result-has-failed' : ''
           ]"
         >
           <div class="match-header">
-            <strong v-if="matchCount > 0">✅ 匹配成功</strong>
-            <strong v-else>⚠️ 未找到匹配</strong>
+            <strong v-if="matchCount > 0">✅ 已填写 {{ matchCount }} 个订单</strong>
+            <strong v-else>⚠️ 没有订单被填写</strong>
             <button class="clear-button" @click="clearFile" title="清除">
               ×
             </button>
           </div>
           <div class="match-count">
             <template v-if="matchCount > 0">
-              成功匹配 <strong>{{ matchCount }}</strong> 个订单
-              <span class="total-count">/ {{ parsedData.length }} 个</span>
+              <span class="total-count">共 {{ parsedData.length }} 个订单</span>
             </template>
             <template v-else>
-              未匹配到任何订单
+              未填写任何订单
               <span class="total-count">（共 {{ parsedData.length }} 个订单）</span>
             </template>
           </div>
+
           <div v-if="matchedOrders.length > 0" class="matched-orders">
-            <div class="orders-label">匹配的订单号：</div>
+            <div class="orders-label">
+              承运商命中已有选项：
+            </div>
             <div class="orders-list">
               <span
-                v-for="(orderNumber, index) in matchedOrders"
-                :key="index"
+                v-for="orderNumber in matchedOrders"
+                :key="orderNumber"
                 class="order-badge"
               >
                 {{ orderNumber }}
               </span>
             </div>
+          </div>
+
+          <div v-if="fallbackOrders.length > 0" class="matched-orders">
+            <div class="orders-label orders-label-warn">
+              匹配不到承运商，已选 Other 并填入名称：
+            </div>
+            <div class="orders-list">
+              <span
+                v-for="item in fallbackOrders"
+                :key="item.orderNumber"
+                class="order-badge order-badge-warn"
+              >
+                {{ item.orderNumber }} · {{ item.carrier }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="failedOrders.length > 0" class="matched-orders">
+            <div class="orders-label orders-label-error">
+              未填写（{{ failedOrders.length }} 个）：
+            </div>
+            <ul class="failed-list">
+              <li v-for="item in failedOrders" :key="item.orderNumber">
+                <strong>{{ item.orderNumber }}</strong
+                >：{{ item.reason }}
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -726,6 +857,39 @@ const handleDownloadTemplate = () => {
   font-size: 12px;
   font-weight: 500;
   border: 1px solid #bbf7d0;
+}
+
+.order-badge-warn {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.orders-label-warn {
+  color: #b45309;
+}
+
+.orders-label-error {
+  color: #b91c1c;
+}
+
+.match-result-has-failed {
+  border-color: #fecaca;
+}
+
+.failed-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.7;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.failed-list strong {
+  font-weight: 600;
+  color: #7f1d1d;
 }
 
 .file-content {

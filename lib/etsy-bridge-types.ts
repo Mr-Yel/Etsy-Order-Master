@@ -110,10 +110,26 @@ export type EtsyDomSelectSetPayload = {
   optionValue: string;
 };
 
+/** select 写入结果：matched=false 表示未命中已有承运商，已回落到 Other(value=-1) */
+export type EtsyDomSelectSetData = {
+  success: true;
+  value: string;
+  text: string;
+  matched: boolean;
+  fallbackToOther: boolean;
+};
+
 export type EtsyDomInputSetPayload = {
   selector: string;
   value: string;
   triggerEvents?: boolean;
+};
+
+/** verified 表示写入后立即回读是否等于期望值（false 说明被框架回滚了） */
+export type EtsyDomInputSetData = {
+  success: true;
+  verified: boolean;
+  readback: string;
 };
 
 export type EtsyImagesFetchPayload = {

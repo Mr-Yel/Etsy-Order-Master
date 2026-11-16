@@ -2,7 +2,9 @@ import {
   ETSY_BRIDGE_ACTIONS,
   type EtsyBridgeOrderState,
   type EtsyContextGetData,
+  type EtsyDomInputSetData,
   type EtsyDomInputSetPayload,
+  type EtsyDomSelectSetData,
   type EtsyDomSelectSetPayload,
   type EtsyImagesFetchData,
   type EtsyImagesFetchPayload,
@@ -58,10 +60,10 @@ export async function getEtsyBridgeContext(options?: {
 
 export async function setEtsySelectOption(
   payload: EtsyDomSelectSetPayload
-): Promise<{ success: true; value?: string }> {
+): Promise<EtsyDomSelectSetData> {
   return sendEtsyMainworldBridgeRequest<
     EtsyDomSelectSetPayload,
-    { success: true; value?: string }
+    EtsyDomSelectSetData
   >({
     action: ETSY_BRIDGE_ACTIONS.domSelectSet,
     payload,
@@ -70,8 +72,11 @@ export async function setEtsySelectOption(
 
 export async function setEtsyInputValue(
   payload: EtsyDomInputSetPayload
-): Promise<{ success: true }> {
-  return sendEtsyMainworldBridgeRequest<EtsyDomInputSetPayload, { success: true }>({
+): Promise<EtsyDomInputSetData> {
+  return sendEtsyMainworldBridgeRequest<
+    EtsyDomInputSetPayload,
+    EtsyDomInputSetData
+  >({
     action: ETSY_BRIDGE_ACTIONS.domInputSet,
     payload,
   });
