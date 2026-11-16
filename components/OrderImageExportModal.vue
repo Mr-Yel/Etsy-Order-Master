@@ -14,7 +14,7 @@ import {
   fetchEtsyOrderPersonalizationFiles,
   type EtsyOrderPersonalizationFile,
 } from "@/api/etsy-orders";
-import { loadOrderImagePages } from "@/lib/order-image-export";
+import { loadOrderImagePages, type OrderImagePage } from "@/lib/order-image-export";
 import { resolveOrderImageStrategy } from "@/lib/order-image-strategies";
 import type { ConvertKind } from "@/lib/image-convert-types";
 import {
@@ -90,11 +90,12 @@ type ImageDownloadFailure = ImageJob & {
 type ExpandedEntry = {
   folderName: string;
   filename: string;
-  base64: string;
+  page: OrderImagePage;
 };
 
 const IMAGE_FETCH_TIMEOUT_MS = 30000;
-const IMAGE_FETCH_CONCURRENCY = 4;
+// 原图可达 50 MiB，限制同时下载数量以降低批量导出的内存峰值。
+const IMAGE_FETCH_CONCURRENCY = 2;
 const LARGE_EXPORT_IMAGE_COUNT = 200;
 /** 生产图数量默认值 */
 const DEFAULT_EXPECTED_IMAGE_COUNT = 1;
@@ -1041,7 +1042,7 @@ async function downloadSelected(
           expandedEntries.push({
             folderName: job.folderName,
             filename: job.filename,
-            base64: page.base64,
+            page,
           });
           return;
         }
@@ -1053,15 +1054,18 @@ async function downloadSelected(
           expandedEntries.push({
             folderName: job.folderName,
             filename: `${job.orderId}_${job.transactionIndex}_附件${seq}.${page.ext}`,
-            base64: page.base64,
+            page,
           });
         });
       });
 
       expandedEntries.forEach((entry, index) => {
-        zip.folder(entry.folderName)?.file(entry.filename, entry.base64, {
-          base64: true,
-        });
+        const page = entry.page;
+        if (page.bytes) {
+          zip.folder(entry.folderName)?.file(entry.filename, page.bytes);
+        } else {
+          zip.folder(entry.folderName)?.file(entry.filename, page.base64, { base64: true });
+        }
 
       });
     }

@@ -82,9 +82,9 @@ test("ZIP routes original PNG bytes and all converted pages through format strat
   const fetched = [], converted = [];
   const api = loadModule("../lib/order-image-export.ts", {
     "./order-image-strategies": strategies,
-    "./etsy-bridge-client": { fetchEtsyImagesAsBase64: async request => {
+    "./image-binary-client": { fetchImageBinary: async request => {
       fetched.push(request);
-      return { results: [{ success: true, base64: "original-png" }], images: [] };
+      return new Uint8Array([137, 80, 78, 71]);
     } },
     "./image-convert-client": { convertAttachmentToImages: async request => {
       converted.push(request);
@@ -94,7 +94,7 @@ test("ZIP routes original PNG bytes and all converted pages through format strat
   const context = { trace: "batch/j1", timeoutMs: 30000 };
   const original = await api.loadOrderImagePages({ ...source, kind: "raw", size: 1, sourceExt: "png" }, context);
   assert.equal(original[0].ext, "png");
-  assert.equal(original[0].base64, "original-png");
+  assert.deepEqual(Array.from(original[0].bytes), [137, 80, 78, 71]);
   for (const kind of ["pdf", "heic", "svg"]) {
     const pages = await api.loadOrderImagePages({ ...source, kind, size: 1, sourceExt: "jpg" }, context);
     assert.equal(pages.length, 2);
@@ -110,7 +110,7 @@ test("ZIP routes original PNG bytes and all converted pages through format strat
 test("ZIP propagates download errors instead of packing an empty file", async () => {
   const api = loadModule("../lib/order-image-export.ts", {
     "./order-image-strategies": strategies,
-    "./etsy-bridge-client": { fetchEtsyImagesAsBase64: async () => ({ results: [{ success: false, error: "HTTP 403" }], images: [] }) },
+    "./image-binary-client": { fetchImageBinary: async () => { throw new Error('HTTP 403'); } },
     "./image-convert-client": {},
   });
   await assert.rejects(api.loadOrderImagePages({ ...source, kind: "raw" }, { trace: "error", timeoutMs: 30000 }), /HTTP 403/);

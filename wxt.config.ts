@@ -134,7 +134,7 @@ export default defineConfig({
     // Web 可访问资源
     web_accessible_resources: [
       {
-        resources: ['page-inject.js'],
+        resources: ['page-inject.js', 'image-transfer.html'],
         matches: ['*://*.etsy.com/*'],
       },
     ],
