@@ -2,8 +2,13 @@ import {
   ETSY_BRIDGE_ACTIONS,
   type EtsyBridgeOrderState,
   type EtsyContextGetData,
+  type EtsyDomCarrierNamesFillData,
+  type EtsyDomCarrierNamesFillPayload,
   type EtsyDomInputSetData,
   type EtsyDomInputSetPayload,
+  type EtsyDomOrderFillData,
+  type EtsyDomOrderFillPayload,
+  type EtsyDomScanData,
   type EtsyDomSelectSetData,
   type EtsyDomSelectSetPayload,
   type EtsyImagesFetchData,
@@ -79,6 +84,43 @@ export async function setEtsyInputValue(
   >({
     action: ETSY_BRIDGE_ACTIONS.domInputSet,
     payload,
+  });
+}
+
+/** 一次性扫描页面上可回填的订单行 */
+export async function scanEtsyOrderRows(): Promise<EtsyDomScanData> {
+  return sendEtsyMainworldBridgeRequest<Record<string, never>, EtsyDomScanData>({
+    action: ETSY_BRIDGE_ACTIONS.domScan,
+    payload: {},
+    timeoutMs: 10_000,
+  });
+}
+
+/** 批量回填第一阶段：运单号 + 承运商下拉框（同一批在主世界同步写入） */
+export async function fillEtsyOrdersBatch(
+  payload: EtsyDomOrderFillPayload
+): Promise<EtsyDomOrderFillData> {
+  return sendEtsyMainworldBridgeRequest<
+    EtsyDomOrderFillPayload,
+    EtsyDomOrderFillData
+  >({
+    action: ETSY_BRIDGE_ACTIONS.domOrderFill,
+    payload,
+    timeoutMs: 20_000,
+  });
+}
+
+/** 批量回填第二阶段：承运商名称输入框 */
+export async function fillEtsyCarrierNamesBatch(
+  payload: EtsyDomCarrierNamesFillPayload
+): Promise<EtsyDomCarrierNamesFillData> {
+  return sendEtsyMainworldBridgeRequest<
+    EtsyDomCarrierNamesFillPayload,
+    EtsyDomCarrierNamesFillData
+  >({
+    action: ETSY_BRIDGE_ACTIONS.domCarrierNamesFill,
+    payload,
+    timeoutMs: 20_000,
   });
 }
 

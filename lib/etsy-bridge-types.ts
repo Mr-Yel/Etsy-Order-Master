@@ -27,6 +27,9 @@ export const ETSY_BRIDGE_ACTIONS = {
   contextGet: "context.get",
   domSelectSet: "dom.select.set",
   domInputSet: "dom.input.set",
+  domScan: "dom.scan",
+  domOrderFill: "dom.order.fill",
+  domCarrierNamesFill: "dom.carrierNames.fill",
   imagesFetchAsBase64: "images.fetchAsBase64",
 } as const;
 
@@ -130,6 +133,63 @@ export type EtsyDomInputSetData = {
   success: true;
   verified: boolean;
   readback: string;
+};
+
+/** 扫描页面上可回填的订单行（一次性查询，避免逐单全文档搜索） */
+export type EtsyDomScanData = {
+  /** 页面上存在运单号输入框或承运商下拉框的订单号 */
+  orderNumbers: string[];
+  /** 有运单号输入框的订单号 */
+  trackingOrderNumbers: string[];
+  /** 有承运商下拉框的订单号 */
+  selectOrderNumbers: string[];
+  /** 有承运商名称输入框（Other 分支）的订单号 */
+  carrierNameOrderNumbers: string[];
+};
+
+export type EtsyDomOrderFillPayload = {
+  orders: Array<{
+    orderNumber: string;
+    trackingNumber?: string;
+    carrierText?: string;
+  }>;
+};
+
+export type EtsyDomOrderFillItemResult = {
+  orderNumber: string;
+  tracking?: {
+    ok: boolean;
+    reason?: string;
+    readback?: string;
+  };
+  carrier?: {
+    ok: boolean;
+    reason?: string;
+    /** 命中已有承运商选项 */
+    matched?: boolean;
+    /** 未命中，已回落到 Other(value=-1)，需另行填写承运商名称 */
+    fallbackToOther?: boolean;
+    text?: string;
+  };
+};
+
+export type EtsyDomOrderFillData = {
+  results: EtsyDomOrderFillItemResult[];
+};
+
+export type EtsyDomCarrierNamesFillPayload = {
+  items: Array<{ orderNumber: string; carrierName: string }>;
+};
+
+export type EtsyDomCarrierNamesFillItemResult = {
+  orderNumber: string;
+  ok: boolean;
+  reason?: string;
+  readback?: string;
+};
+
+export type EtsyDomCarrierNamesFillData = {
+  results: EtsyDomCarrierNamesFillItemResult[];
 };
 
 export type EtsyImagesFetchPayload = {

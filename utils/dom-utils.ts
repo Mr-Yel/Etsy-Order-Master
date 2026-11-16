@@ -2,9 +2,20 @@
  * DOM 操作工具（隔离世界侧）
  * 真正的写入发生在主世界（public/page-inject.js），这里只负责跨世界调用与等待
  */
-import { setEtsyInputValue, setEtsySelectOption } from "@/lib/etsy-bridge-client";
+import {
+  fillEtsyCarrierNamesBatch,
+  fillEtsyOrdersBatch,
+  scanEtsyOrderRows,
+  setEtsyInputValue,
+  setEtsySelectOption,
+} from "@/lib/etsy-bridge-client";
 import type {
+  EtsyDomCarrierNamesFillData,
+  EtsyDomCarrierNamesFillPayload,
   EtsyDomInputSetData,
+  EtsyDomOrderFillData,
+  EtsyDomOrderFillPayload,
+  EtsyDomScanData,
   EtsyDomSelectSetData,
 } from "@/lib/etsy-bridge-types";
 
@@ -89,5 +100,94 @@ export function waitForElement(
         resolve(null);
       }
     }, interval);
+  });
+}
+
+/**
+ * 一次性扫描页面可回填的订单行。
+ * 提前调用可以把「订单是否在页面上」和「选承运商」两件事解耦，避免逐单全文档搜索。
+ */
+export async function scanOrderRows(): Promise<EtsyDomScanData | null> {
+  try {
+    return await scanEtsyOrderRows();
+  } catch (error) {
+    console.warn("⚠️ [隔离世界] 扫描订单行失败:", error);
+    return null;
+  }
+}
+
+/** 批量写入运单号 + 承运商下拉框（一批一次跨世界往返） */
+export async function fillOrdersBatch(
+  payload: EtsyDomOrderFillPayload
+): Promise<EtsyDomOrderFillData | null> {
+  try {
+    return await fillEtsyOrdersBatch(payload);
+  } catch (error) {
+    console.warn("⚠️ [隔离世界] 批量写入运单号/承运商失败:", error);
+    return null;
+  }
+}
+
+/** 批量写入承运商名称（选中 Other 后才渲染的输入框） */
+export async function fillCarrierNamesBatch(
+  payload: EtsyDomCarrierNamesFillPayload
+): Promise<EtsyDomCarrierNamesFillData | null> {
+  try {
+    return await fillEtsyCarrierNamesBatch(payload);
+  } catch (error) {
+    console.warn("⚠️ [隔离世界] 批量写入承运商名称失败:", error);
+    return null;
+  }
+}
+
+/**
+ * 等待一批运单对应的承运商名称输入框渲染完成。
+ * 用 isConnected 判断，不做 getBoundingClientRect，避免轮询触发强制布局。
+ */
+export function waitForCarrierNameInputs(
+  orderNumbers: string[],
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<{ missing: string[]; elapsedMs: number }> {
+  const timeoutMs = options?.timeoutMs ?? 4000;
+  const intervalMs = options?.intervalMs ?? 50;
+  const startedAt = Date.now();
+
+  const collectMissing = (): string[] =>
+    orderNumbers.filter((orderNumber) => {
+      try {
+        const element = document.querySelector(carrierNameSelector(orderNumber));
+        return !element || !element.isConnected;
+      } catch {
+        return true;
+      }
+    });
+
+  return new Promise((resolve) => {
+    const tick = () => {
+      const missing = collectMissing();
+      const elapsedMs = Date.now() - startedAt;
+
+      if (missing.length === 0 || elapsedMs >= timeoutMs) {
+        resolve({ missing, elapsedMs });
+        return;
+      }
+
+      window.setTimeout(tick, intervalMs);
+    };
+
+    tick();
+  });
+}
+
+/** 让出一帧，等 Etsy 完成本轮 React 提交与绘制 */
+export function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame !== "function") {
+      window.setTimeout(resolve, 16);
+      return;
+    }
+    requestAnimationFrame(() => {
+      window.setTimeout(resolve, 0);
+    });
   });
 }

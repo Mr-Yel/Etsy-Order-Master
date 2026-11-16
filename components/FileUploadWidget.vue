@@ -2,11 +2,11 @@
 import { ref } from "vue";
 import Papa from "papaparse";
 import {
-  carrierNameSelector,
-  changeInputValue,
-  changeSelectOption,
-  trackingSelector,
-  waitForElement,
+  fillCarrierNamesBatch,
+  fillOrdersBatch,
+  nextPaint,
+  scanOrderRows,
+  waitForCarrierNameInputs,
 } from "@/utils/dom-utils";
 import { downloadCSVTemplate } from "@/utils/csv-utils";
 
@@ -17,20 +17,14 @@ type OrderData = {
   shippingCarrier: string;
 };
 
-type FillOutcome =
-  | {
-      kind: "filled";
-      carrier: "matched" | "other" | "none";
-      carrierText: string;
-    }
-  | { kind: "failed"; reason: string };
-
 const isOpen = ref(false);
 const selectedFile = ref<File | null>(null);
 const fileContent = ref<string>("");
 const parseError = ref<string>("");
 const parsedData = ref<OrderData[]>([]);
 const isProcessing = ref(false);
+/** 当前处理阶段文案 */
+const processStage = ref("");
 const processedCount = ref(0);
 /** 承运商命中已有选项的订单 */
 const matchedOrders = ref<string[]>([]);
@@ -157,132 +151,186 @@ const parseCSV = (csvText: string) => {
 };
 
 /**
- * 填写单个订单：先运单号，再承运商；承运商匹配不到则回落 Other 并填写原值
- * 注意：page-inject.js 已在 content.ts 初始化时注入，无需重复注入
+ * 一批写入多少单：同批在主世界一个同步块内完成，Etsy 的 React 会把多次
+ * setState 合并成一次渲染，批越大越快，但单次长任务也越久。
  */
-const fillOrder = async (order: OrderData): Promise<FillOutcome> => {
-  const { orderNumber, trackingNumber, shippingCarrier } = order;
-  const hasTracking = Boolean(trackingNumber);
-  const hasCarrier = Boolean(shippingCarrier);
-
-  if (!hasTracking && !hasCarrier) {
-    return { kind: "failed", reason: "运单号与承运商都为空" };
-  }
-
-  // 1) 运单号先写，避免后续承运商变更引起的重渲染干扰
-  if (hasTracking) {
-    const result = await changeInputValue(
-      trackingSelector(orderNumber),
-      trackingNumber,
-      true
-    );
-    if (!result) {
-      return { kind: "failed", reason: "未找到该订单的运单号输入框" };
-    }
-    if (!result.verified) {
-      return {
-        kind: "failed",
-        reason: `运单号未写入（回读为 "${result.readback}"）`,
-      };
-    }
-  }
-
-  if (!hasCarrier) {
-    return { kind: "filled", carrier: "none", carrierText: "" };
-  }
-
-  // 2) 承运商：命中已有选项就选中，匹配不到由主世界回落到 Other(value=-1)
-  const selectResult = await changeSelectOption(orderNumber, shippingCarrier);
-  if (!selectResult) {
-    return { kind: "failed", reason: "未找到该订单的承运商下拉框" };
-  }
-
-  if (!selectResult.fallbackToOther) {
-    return { kind: "filled", carrier: "matched", carrierText: selectResult.text };
-  }
-
-  // 3) 选中 Other 后承运商名称输入框才渲染，需要等待它出现
-  const host = await waitForElement(carrierNameSelector(orderNumber));
-  if (!host) {
-    return { kind: "failed", reason: "选中 Other 后承运商名称输入框未出现" };
-  }
-
-  const nameResult = await changeInputValue(
-    carrierNameSelector(orderNumber),
-    shippingCarrier,
-    true
-  );
-  if (!nameResult) {
-    return { kind: "failed", reason: "承运商名称写入失败" };
-  }
-  if (!nameResult.verified) {
-    return {
-      kind: "failed",
-      reason: `承运商名称未写入（回读为 "${nameResult.readback}"）`,
-    };
-  }
-
-  return { kind: "filled", carrier: "other", carrierText: shippingCarrier };
-};
+const BATCH_SIZE = 8;
+/** 选中 Other 后等承运商名称输入框渲染的最长等待 */
+const CARRIER_NAME_WAIT_MS = 4000;
 
 /**
- * 按 CSV 顺序串行填写所有订单
+ * 按 CSV 顺序分批回填。
+ * 流程：扫描页面 → 分批写「运单号 + 承运商」→ 等 Other 输入框渲染 → 分批写「承运商名称」。
+ * 承运商名称后置是关键：避免每单都空等输入框出现，把 N 次等待合并成 1 次。
  */
 const fillFormFields = async (orderData: OrderData[]) => {
   isProcessing.value = true;
+  processStage.value = "正在扫描订单行...";
   processedCount.value = 0;
   matchedOrders.value = [];
   fallbackOrders.value = [];
   failedOrders.value = [];
   matchCount.value = 0;
 
+  const startedAt = Date.now();
+
   console.log("\n" + "=".repeat(60));
   console.log("🚀 开始填充表单字段...");
   console.log("=".repeat(60));
 
+  // 1) 先分离明显的无效行，再扫描页面，提前剔除页面上不存在的订单
+  const candidates: OrderData[] = [];
   for (const order of orderData) {
-    const orderNumber = order.orderNumber;
-
-    if (!orderNumber) {
+    if (!order.orderNumber) {
       failedOrders.value.push({ orderNumber: "(空)", reason: "缺少订单号" });
-      processedCount.value += 1;
       continue;
     }
+    if (!order.trackingNumber && !order.shippingCarrier) {
+      failedOrders.value.push({
+        orderNumber: order.orderNumber,
+        reason: "运单号与承运商都为空",
+      });
+      continue;
+    }
+    candidates.push(order);
+  }
 
-    try {
-      const outcome = await fillOrder(order);
+  const scan = await scanOrderRows();
+  const onPage = new Set(scan?.orderNumbers ?? []);
+  const scanned = Boolean(scan);
+  if (scanned) {
+    console.log(
+      `🔍 扫描到页面订单行 ${onPage.size} 个（运单号输入框 ${scan?.trackingOrderNumbers.length ?? 0} 个）`
+    );
+  }
 
-      if (outcome.kind === "filled") {
-        if (outcome.carrier === "other") {
-          fallbackOrders.value.push({
-            orderNumber,
-            carrier: outcome.carrierText,
-          });
-          console.log(
-            `🟡 订单 ${orderNumber}：承运商「${outcome.carrierText}」无匹配项，已选 Other 并填入名称`
-          );
-        } else {
-          matchedOrders.value.push(orderNumber);
-          console.log(`✅ 订单 ${orderNumber} 填充成功`);
-        }
-      } else {
-        failedOrders.value.push({ orderNumber, reason: outcome.reason });
-        console.warn(`❌ 订单 ${orderNumber} 未填充：${outcome.reason}`);
+  // 扫描不到的订单排到最后再试：可能页面还没渲染完，不直接判失败
+  const onPageTargets: OrderData[] = [];
+  const offPageTargets: OrderData[] = [];
+  for (const order of candidates) {
+    if (scanned && !onPage.has(order.orderNumber)) {
+      offPageTargets.push(order);
+    } else {
+      onPageTargets.push(order);
+    }
+  }
+  if (offPageTargets.length > 0) {
+    console.log(`⚠️ 扫描未命中 ${offPageTargets.length} 个订单，排到最后再尝试`);
+  }
+  const targets = [...onPageTargets, ...offPageTargets];
+
+  let handledCount = failedOrders.value.length;
+  processedCount.value = handledCount;
+
+  /** 需要第二阶段补写承运商名称的订单 */
+  const pendingCarrierNames: { orderNumber: string; carrierName: string }[] = [];
+
+  // 2) 分批写运单号 + 承运商
+  processStage.value = "正在写入运单号与承运商...";
+
+  for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+    const chunk = targets.slice(i, i + BATCH_SIZE);
+
+    const batchResult = await fillOrdersBatch({
+      orders: chunk.map((order) => ({
+        orderNumber: order.orderNumber,
+        trackingNumber: order.trackingNumber || undefined,
+        carrierText: order.shippingCarrier || undefined,
+      })),
+    });
+
+    const resultMap = new Map(
+      (batchResult?.results ?? []).map((item) => [item.orderNumber, item])
+    );
+
+    for (const order of chunk) {
+      const orderNumber = order.orderNumber;
+      const item = resultMap.get(orderNumber);
+      let failedReason: string | null = null;
+
+      if (!item) {
+        failedReason = batchResult ? "该批次未返回结果" : "批量写入请求失败";
+      } else if (item.tracking && !item.tracking.ok) {
+        failedReason = `运单号未写入（${item.tracking.reason ?? "未知原因"}${
+          item.tracking.readback ? `，回读为 "${item.tracking.readback}"` : ""
+        }）`;
+      } else if (item.carrier && !item.carrier.ok) {
+        failedReason = `承运商未写入（${item.carrier.reason ?? "未知原因"}）`;
       }
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : "未知错误";
-      failedOrders.value.push({ orderNumber, reason });
-      console.error(`❌ 处理订单 ${orderNumber} 时发生错误:`, error);
+
+      if (failedReason) {
+        failedOrders.value.push({ orderNumber, reason: failedReason });
+      } else if (item?.carrier?.fallbackToOther) {
+        pendingCarrierNames.push({
+          orderNumber,
+          carrierName: order.shippingCarrier,
+        });
+      } else {
+        matchedOrders.value.push(orderNumber);
+        console.log(`✅ 订单 ${orderNumber} 填充成功`);
+      }
+
+      handledCount += 1;
     }
 
-    processedCount.value += 1;
+    processedCount.value = handledCount;
+    await nextPaint();
+  }
+
+  // 3) 等承运商名称输入框渲染（只等一次，不是每单都等）
+  if (pendingCarrierNames.length > 0) {
+    processStage.value = "等待承运商名称输入框渲染...";
+    const wait = await waitForCarrierNameInputs(
+      pendingCarrierNames.map((item) => item.orderNumber),
+      { timeoutMs: CARRIER_NAME_WAIT_MS }
+    );
+    console.log(
+      `⌛ 等待承运商名称输入框：${wait.elapsedMs}ms，未就绪 ${wait.missing.length} 个`
+    );
+
+    // 4) 分批补写承运商名称
+    processStage.value = "正在写入承运商名称...";
+
+    for (let i = 0; i < pendingCarrierNames.length; i += BATCH_SIZE) {
+      const chunk = pendingCarrierNames.slice(i, i + BATCH_SIZE);
+
+      const batchResult = await fillCarrierNamesBatch({ items: chunk });
+      const resultMap = new Map(
+        (batchResult?.results ?? []).map((item) => [item.orderNumber, item])
+      );
+
+      for (const entry of chunk) {
+        const item = resultMap.get(entry.orderNumber);
+
+        if (!item || !item.ok) {
+          failedOrders.value.push({
+            orderNumber: entry.orderNumber,
+            reason: `承运商名称未写入（${
+              item?.reason ?? (batchResult ? "该批次未返回结果" : "批量写入请求失败")
+            }）`,
+          });
+          continue;
+        }
+
+        fallbackOrders.value.push({
+          orderNumber: entry.orderNumber,
+          carrier: entry.carrierName,
+        });
+        console.log(
+          `🟡 订单 ${entry.orderNumber}：承运商「${entry.carrierName}」无匹配项，已选 Other 并填入名称`
+        );
+      }
+
+      await nextPaint();
+    }
   }
 
   matchCount.value = matchedOrders.value.length + fallbackOrders.value.length;
   isProcessing.value = false;
+  processStage.value = "";
 
   console.log("\n" + "=".repeat(60));
-  console.log("✅ 表单填充完成！");
+  console.log(`✅ 表单填充完成！耗时 ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
   console.log(`📊 已填写: ${matchCount.value}/${orderData.length} 个订单`);
   console.log(`   · 承运商命中: ${matchedOrders.value.length}`);
   console.log(`   · 回落 Other: ${fallbackOrders.value.length}`);
@@ -307,6 +355,7 @@ const clearFile = () => {
   matchCount.value = 0;
   processedCount.value = 0;
   isProcessing.value = false;
+  processStage.value = "";
   const input = document.querySelector(
     'input[type="file"]'
   ) as HTMLInputElement;
@@ -433,7 +482,7 @@ const handleDownloadTemplate = () => {
 
         <!-- 处理中提示 -->
         <div v-if="isProcessing" class="processing-message">
-          <strong>⏳ 正在填充表单...</strong>
+          <strong>⏳ {{ processStage || "正在填充表单..." }}</strong>
           <span>
             已处理 {{ processedCount }} / {{ parsedData.length }} 个订单
           </span>

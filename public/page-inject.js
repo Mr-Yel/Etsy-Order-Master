@@ -30,6 +30,9 @@
     contextGet: "context.get",
     domSelectSet: "dom.select.set",
     domInputSet: "dom.input.set",
+    domScan: "dom.scan",
+    domOrderFill: "dom.order.fill",
+    domCarrierNamesFill: "dom.carrierNames.fill",
     imagesFetchAsBase64: "images.fetchAsBase64",
   };
   var DUP_SYNC_TRACE_PREFIX = "[DUP-SYNC-TRACE]";
@@ -597,6 +600,18 @@
         return { success: false, error: "未找到 input 元素" };
       }
 
+      return applyInputValueToHost(host, value, triggerEvents);
+    } catch (error) {
+      return { success: false, error: error.message || "未知错误" };
+    }
+  }
+
+  /**
+   * 对已取到的宿主元素写入值，写入后回读校验。
+   * 批量回填时复用该函数，省掉逐单 querySelector 的全文档搜索。
+   */
+  function applyInputValueToHost(host, value, triggerEvents) {
+    try {
       // 宿主是自定义元素时，先写它的对外 value，再写内部真实 input
       if (!(host instanceof HTMLInputElement) && !(host instanceof HTMLTextAreaElement)) {
         try {
@@ -633,6 +648,161 @@
     } catch (error) {
       return { success: false, error: error.message || "未知错误" };
     }
+  }
+
+  var TRACKING_NAME_PREFIX = "trackingCode-";
+  var CARRIER_SELECT_NAME_PREFIX = "carrierNameSelect-";
+  var CARRIER_NAME_PREFIX = "carrierName-";
+
+  /** 按 name 精确定位，避免订单号里的引号/反斜杠破坏属性选择器 */
+  function findElementByName(name) {
+    var nodes = document.getElementsByName(name);
+    return nodes && nodes.length ? nodes[0] : null;
+  }
+
+  /** 一次 querySelectorAll 取出某前缀下的全部订单号（去重） */
+  function collectOrderNumbersByPrefix(prefix) {
+    var result = [];
+    var seen = Object.create(null);
+    var nodes = document.querySelectorAll('[name^="' + prefix + '"]');
+
+    for (var i = 0; i < nodes.length; i++) {
+      var name = nodes[i].getAttribute("name") || "";
+      if (name.indexOf(prefix) !== 0) continue;
+      var orderNumber = name.slice(prefix.length);
+      if (!orderNumber || seen[orderNumber]) continue;
+      seen[orderNumber] = true;
+      result.push(orderNumber);
+    }
+
+    return result;
+  }
+
+  /** 扫描页面当前可回填的订单行，供 content 侧一次性建立索引 */
+  function scanOrderRowsInMainWorld() {
+    var trackingOrderNumbers = collectOrderNumbersByPrefix(TRACKING_NAME_PREFIX);
+    var selectOrderNumbers = collectOrderNumbersByPrefix(CARRIER_SELECT_NAME_PREFIX);
+    var carrierNameOrderNumbers = collectOrderNumbersByPrefix(CARRIER_NAME_PREFIX);
+
+    var orderNumbers = [];
+    var seen = Object.create(null);
+    [trackingOrderNumbers, selectOrderNumbers].forEach(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        if (seen[list[i]]) continue;
+        seen[list[i]] = true;
+        orderNumbers.push(list[i]);
+      }
+    });
+
+    return {
+      orderNumbers: orderNumbers,
+      trackingOrderNumbers: trackingOrderNumbers,
+      selectOrderNumbers: selectOrderNumbers,
+      carrierNameOrderNumbers: carrierNameOrderNumbers,
+    };
+  }
+
+  /**
+   * 批量回填第一阶段：运单号 + 承运商下拉框。
+   * 同一批在同一个同步块里完成，Etsy 的 React 会把多次 setState 合并成一次渲染。
+   */
+  function fillOrdersBatchInMainWorld(orders) {
+    var list = orders && orders.length ? orders : [];
+    var results = [];
+
+    for (var i = 0; i < list.length; i++) {
+      var order = list[i] || {};
+      var orderNumber = order.orderNumber ? String(order.orderNumber) : "";
+      var item = { orderNumber: orderNumber };
+
+      if (!orderNumber) {
+        item.tracking = { ok: false, reason: "缺少订单号" };
+        results.push(item);
+        continue;
+      }
+
+      var trackingBlocked = false;
+
+      if (order.trackingNumber) {
+        var trackingHost = findElementByName(TRACKING_NAME_PREFIX + orderNumber);
+        if (!trackingHost) {
+          item.tracking = { ok: false, reason: "未找到运单号输入框" };
+          trackingBlocked = true;
+        } else {
+          var trackingResult = applyInputValueToHost(trackingHost, order.trackingNumber, true);
+          var trackingOk = !!(trackingResult && trackingResult.success && trackingResult.verified);
+          item.tracking = {
+            ok: trackingOk,
+            readback: trackingResult && trackingResult.readback,
+            reason: trackingOk
+              ? undefined
+              : (trackingResult && trackingResult.error) || "写入后回读不一致",
+          };
+          trackingBlocked = !trackingOk;
+        }
+      }
+
+      // 运单号没写进去时不碰承运商，避免留下半填状态
+      if (!trackingBlocked && order.carrierText) {
+        var selectResult = changeSelectOptionInMainWorld(orderNumber, order.carrierText);
+        if (selectResult && selectResult.success) {
+          item.carrier = {
+            ok: true,
+            matched: !!selectResult.matched,
+            fallbackToOther: !!selectResult.fallbackToOther,
+            text: selectResult.text,
+          };
+        } else {
+          item.carrier = {
+            ok: false,
+            reason: (selectResult && selectResult.error) || "设置承运商失败",
+          };
+        }
+      }
+
+      results.push(item);
+    }
+
+    return { results: results };
+  }
+
+  /**
+   * 批量回填第二阶段：承运商名称输入框（选中 Other 后才会渲染出来）
+   */
+  function fillCarrierNamesBatchInMainWorld(items) {
+    var list = items && items.length ? items : [];
+    var results = [];
+
+    for (var i = 0; i < list.length; i++) {
+      var entry = list[i] || {};
+      var orderNumber = entry.orderNumber ? String(entry.orderNumber) : "";
+      var host = orderNumber ? findElementByName(CARRIER_NAME_PREFIX + orderNumber) : null;
+
+      if (!host) {
+        results.push({
+          orderNumber: orderNumber,
+          ok: false,
+          reason: "未找到承运商名称输入框",
+        });
+        continue;
+      }
+
+      var result = applyInputValueToHost(
+        host,
+        entry.carrierName == null ? "" : String(entry.carrierName),
+        true
+      );
+      var ok = !!(result && result.success && result.verified);
+
+      results.push({
+        orderNumber: orderNumber,
+        ok: ok,
+        readback: result && result.readback,
+        reason: ok ? undefined : (result && result.error) || "写入后回读不一致",
+      });
+    }
+
+    return { results: results };
   }
 
   function getEtsyContextDataForBridge() {
@@ -724,6 +894,21 @@
             inputResult
           );
         }
+        return;
+      }
+
+      if (action === ETSY_BRIDGE_ACTIONS.domScan) {
+        postBridgeSuccess(requestId, scanOrderRowsInMainWorld());
+        return;
+      }
+
+      if (action === ETSY_BRIDGE_ACTIONS.domOrderFill) {
+        postBridgeSuccess(requestId, fillOrdersBatchInMainWorld(payload.orders));
+        return;
+      }
+
+      if (action === ETSY_BRIDGE_ACTIONS.domCarrierNamesFill) {
+        postBridgeSuccess(requestId, fillCarrierNamesBatchInMainWorld(payload.items));
         return;
       }
 
