@@ -49,7 +49,7 @@ test("export modal still loads on mount, shows progress and resolves preview thr
   state.downloadTotal.value = 15;
   state.downloadCompleted.value = 4;
   assert.match(state.downloadButtonText.value, /4\/15/);
-  state.showAttachmentPreview({ ...source, mimeType: "application/pdf" }, { clientX: 500, clientY: 300 });
+  state.showAttachmentPreview({ ...source, url: "https://example.com/file.pdf", mimeType: "application/pdf" }, { clientX: 500, clientY: 300 });
   assert.equal(state.previewImage.value.url, thumbnailUrl.replace("75x75", "fullxfull"));
   state.handlePreviewError();
   assert.equal(state.previewImage.value.url, thumbnailUrl);
@@ -57,11 +57,13 @@ test("export modal still loads on mount, shows progress and resolves preview thr
 
 test("format resolution supports MIME, filename and URL including case/query strings", () => {
   for (const [file, expected] of [
-    [{ ...source, mimeType: "application/pdf" }, "pdf"],
-    [{ ...source, filename: "FILE.PDF" }, "pdf"],
+    [{ ...source, url: "https://example.com/file.pdf", mimeType: "application/pdf" }, "pdf"],
+    [{ ...source, url: "https://example.com/file.bin", filename: "FILE.PDF" }, "pdf"],
     [{ ...source, url: "https://example.com/FILE.PDF?version=0" }, "pdf"],
-    [{ ...source, mimeType: "image/heif" }, "heic"],
-    [{ ...source, filename: "file.svg" }, "svg"],
+    [{ ...source, url: "https://example.com/file.bin", mimeType: "image/heif" }, "heic"],
+    [{ ...source, filename: "file.HEIC", mimeType: "image/heic", url: "https://example.com/file.jpg?version=0" }, "raw"],
+    [{ ...source, filename: "file.jpg", mimeType: "image/jpeg", url: "https://example.com/file.heic?version=0" }, "heic"],
+    [{ ...source, url: "https://example.com/file.bin", filename: "file.svg" }, "svg"],
     [source, "raw"],
     [{ ...source, filename: "file.png", mimeType: "image/png" }, "raw"],
   ]) assert.equal(strategies.resolveOrderImageStrategy(file).kind, expected);

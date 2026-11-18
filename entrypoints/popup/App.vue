@@ -4,7 +4,7 @@
       <div class="header-left">
         <h1 class="title">
           {{ EOM_DISPLAY_NAME }}
-          <span v-if="EOM_VERSION" class="version">v{{ EOM_VERSION }}</span>
+          <VersionTag size="sm" />
         </h1>
         <p v-if="shopId != null" class="shop-id">
           当前店铺 ID：{{ shopId }}
@@ -49,9 +49,10 @@
 import { ref, onMounted } from "vue";
 import OrderExport from "@/components/OrderExport.vue";
 import ImageDownload from "@/components/ImageDownload.vue";
+import VersionTag from "@/components/VersionTag.vue";
 import { getEtsyContextFromActiveTab } from "@/lib/etsy-tab-client";
 import { useAuth } from "@/composables/useAuth";
-import { EOM_DISPLAY_NAME, EOM_VERSION } from "@/lib/runtime-identity";
+import { EOM_DISPLAY_NAME } from "@/lib/runtime-identity";
 
 type TabId = "order" | "image";
 
@@ -105,12 +106,6 @@ onMounted(() => {
   font-weight: 600;
   color: #1f2937;
   margin: 0;
-}
-
-.version {
-  font-size: 11px;
-  font-weight: 500;
-  color: #9ca3af;
 }
 
 .shop-id {

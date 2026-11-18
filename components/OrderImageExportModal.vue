@@ -31,6 +31,7 @@ import type {
   EtsyOrderTransaction,
 } from "@/types/etsy-order";
 import { getUploadedPhotoCount, isPhotoVariation } from "@/types/etsy-order";
+import VersionTag from "@/components/VersionTag.vue";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -473,6 +474,11 @@ function getExtFromUrl(url: string, fallback = "jpg"): string {
 }
 
 function getExtFromAttachment(file: EtsyOrderPersonalizationFile): string {
+  // Etsy 可能保留原始 HEIC 文件名，但下载 URL 已是 JPG；以 URL 的实际资源后缀为准。
+  const urlExt = getExtFromUrl(file.url, "");
+  if (["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "svg", "pdf"].includes(urlExt)) {
+    return urlExt;
+  }
   const nameMatch = file.filename.match(/\.([a-z0-9]+)$/i);
   if (nameMatch?.[1]) return nameMatch[1].toLowerCase();
   if (file.mimeType === "image/png") return "png";
@@ -1589,6 +1595,7 @@ onMounted(() => {
       <div class="modal-footer">
         <div class="footer-info">
           <span>已选 {{ selectedRows.length }} 项 / {{ selectedSkuCount }} 个 SKU</span>
+          <VersionTag size="sm" />
           <span v-if="exportNotice" class="export-notice">
             {{ exportNotice }}
           </span>

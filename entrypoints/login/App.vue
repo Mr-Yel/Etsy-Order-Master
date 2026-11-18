@@ -6,6 +6,9 @@
           <span class="login-logo">EOM</span>
           <h1 class="login-title">{{ EOM_DISPLAY_NAME }}</h1>
         </div>
+        <div class="login-version">
+          <VersionTag size="md" />
+        </div>
       </header>
 
       <main class="login-main">
@@ -84,6 +87,7 @@ import {
   clearRememberedCredentials,
 } from "@/lib/auth-manager";
 import { EOM_DISPLAY_NAME } from "@/lib/runtime-identity";
+import VersionTag from "@/components/VersionTag.vue";
 
 const { user, isLoggedIn, login: doLogin, logout: doLogout } = useAuth();
 
@@ -160,6 +164,11 @@ const handleLogout = async () => {
   justify-content: center;
   gap: 10px;
   margin-bottom: 6px;
+}
+
+.login-version {
+  display: flex;
+  justify-content: center;
 }
 
 .login-logo {

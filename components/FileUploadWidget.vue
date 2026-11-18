@@ -9,6 +9,7 @@ import {
   waitForCarrierNameInputs,
 } from "@/utils/dom-utils";
 import { downloadCSVTemplate } from "@/utils/csv-utils";
+import VersionTag from "@/components/VersionTag.vue";
 
 // 订单数据类型定义
 type OrderData = {
@@ -405,6 +406,7 @@ const handleDownloadTemplate = () => {
       <div class="panel-header">
         <div class="header-left">
           <h3>文件上传</h3>
+          <VersionTag size="sm" tone="inverse" />
           <button
             class="download-template-button-icon"
             @click="handleDownloadTemplate"

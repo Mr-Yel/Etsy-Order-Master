@@ -25,6 +25,7 @@ import * as XLSX from "xlsx";
 import { syncOrdersToKst } from "@/lib/kst-order-sync";
 import { useAuth } from "@/composables/useAuth";
 import { useNotyf } from "@/composables/useNotyf";
+import VersionTag from "@/components/VersionTag.vue";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const { isLoggedIn, openLoginPage, loadUser } = useAuth();
@@ -626,10 +627,13 @@ onMounted(() => {
       </div>
 
       <div class="modal-footer">
-        <span>
-          当前页 {{ rows.length }} 条，已选 {{ selectedRows.length }} 条明细
-          <template v-if="totalOrders != null">，共 {{ totalOrders }} 条</template>
-        </span>
+        <div class="footer-meta">
+          <span>
+            当前页 {{ rows.length }} 条，已选 {{ selectedRows.length }} 条明细
+            <template v-if="totalOrders != null">，共 {{ totalOrders }} 条</template>
+          </span>
+          <VersionTag size="sm" />
+        </div>
        <div>
         <button
           type="button"
@@ -1057,6 +1061,14 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+}
+
+.footer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .btn-export {

@@ -22,6 +22,14 @@ function pathname(url: string): string {
   catch { return url.toLowerCase(); }
 }
 
+function extensionFromUrl(url: string): string {
+  const path = pathname(url);
+  const match = path.match(/\.([a-z0-9]+)$/i);
+  return match?.[1]?.toLowerCase() ?? "";
+}
+
+const RASTER_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp"]);
+
 function matchesFormat(source: OrderImageSource, extensions: string[]): boolean {
   const mime = (source.mimeType || "").toLowerCase();
   const name = (source.filename || "").toLowerCase();
@@ -51,7 +59,17 @@ export const orderImageStrategies: readonly OrderImageStrategy[] = [
 ];
 
 export function resolveOrderImageStrategy(source: OrderImageSource): OrderImageStrategy {
-  // raw 为兼容现有行为的兜底策略，始终放在最后。
+  // Etsy 的下载 URL 指向实际可下载资源，优先于原始上传文件名 / MIME。
+  // 例如原始文件是 HEIC，但 Etsy URL 已经是 JPG 时，不能再交给 libheif。
+  const urlExt = extensionFromUrl(source.url);
+  if (RASTER_EXTENSIONS.has(urlExt)) {
+    return getOrderImageStrategy("raw");
+  }
+  if (urlExt === "heic" || urlExt === "heif") {
+    return getOrderImageStrategy("heic");
+  }
+
+  // URL 没有可靠扩展名时，才回退到 MIME / 原始文件名。raw 为兜底策略。
   return orderImageStrategies.find(strategy => strategy.matches(source))!;
 }
 
