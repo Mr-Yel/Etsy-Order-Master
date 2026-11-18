@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref } from "vue";
+import { reactive, ref } from "vue";
 import Papa from "papaparse";
 import {
   fillCarrierNamesBatch,
@@ -34,6 +34,30 @@ const fallbackOrders = ref<{ orderNumber: string; carrier: string }[]>([]);
 /** 未写入的订单及原因 */
 const failedOrders = ref<{ orderNumber: string; reason: string }[]>([]);
 const matchCount = ref(0);
+/** 页面表单里有、但 CSV 表格里没有的订单号 */
+const pageOnlyOrders = ref<string[]>([]);
+/** 页面扫描到的订单总数；-1 表示未扫描或扫描失败 */
+const pageScannedCount = ref(-1);
+
+/** 各分组的展开状态：默认全部收缩 */
+const expanded = reactive({
+  pageOnly: false,
+  matched: false,
+  fallback: false,
+  failed: false,
+});
+
+const toggleSection = (key: keyof typeof expanded) => {
+  expanded[key] = !expanded[key];
+};
+
+/** 重置分组展开状态（每次重新导入都回到收缩） */
+const resetSections = () => {
+  expanded.pageOnly = false;
+  expanded.matched = false;
+  expanded.fallback = false;
+  expanded.failed = false;
+};
 
 const togglePanel = () => {
   isOpen.value = !isOpen.value;
@@ -171,7 +195,10 @@ const fillFormFields = async (orderData: OrderData[]) => {
   matchedOrders.value = [];
   fallbackOrders.value = [];
   failedOrders.value = [];
+  pageOnlyOrders.value = [];
+  pageScannedCount.value = -1;
   matchCount.value = 0;
+  resetSections();
 
   const startedAt = Date.now();
 
@@ -203,6 +230,21 @@ const fillFormFields = async (orderData: OrderData[]) => {
     console.log(
       `🔍 扫描到页面订单行 ${onPage.size} 个（运单号输入框 ${scan?.trackingOrderNumbers.length ?? 0} 个）`
     );
+
+    // 页面表单里有、表格里没有的订单：用来发现 CSV 漏单
+    const csvOrderNumbers = new Set(
+      orderData.map((order) => order.orderNumber).filter(Boolean)
+    );
+    pageScannedCount.value = onPage.size;
+    pageOnlyOrders.value = Array.from(onPage)
+      .filter((orderNumber) => !csvOrderNumbers.has(orderNumber))
+      .sort();
+    if (pageOnlyOrders.value.length > 0) {
+      console.warn(
+        `⚠️ 表单存在但表格未找到 ${pageOnlyOrders.value.length} 单:`,
+        pageOnlyOrders.value
+      );
+    }
   }
 
   // 扫描不到的订单排到最后再试：可能页面还没渲染完，不直接判失败
@@ -353,10 +395,13 @@ const clearFile = () => {
   matchedOrders.value = [];
   fallbackOrders.value = [];
   failedOrders.value = [];
+  pageOnlyOrders.value = [];
+  pageScannedCount.value = -1;
   matchCount.value = 0;
   processedCount.value = 0;
   isProcessing.value = false;
   processStage.value = "";
+  resetSections();
   const input = document.querySelector(
     'input[type="file"]'
   ) as HTMLInputElement;
@@ -516,11 +561,56 @@ const handleDownloadTemplate = () => {
             </template>
           </div>
 
-          <div v-if="matchedOrders.length > 0" class="matched-orders">
-            <div class="orders-label">
-              承运商命中已有选项：
+          <!-- 表单存在但表格未找到：始终展示，便于确认有没有漏单 -->
+          <div class="match-section">
+            <button
+              type="button"
+              class="section-toggle"
+              :class="{ 'section-toggle-static': pageOnlyOrders.length === 0 }"
+              @click="pageOnlyOrders.length > 0 && toggleSection('pageOnly')"
+            >
+              <span class="section-title">表单存在但表格未找到</span>
+              <span v-if="pageOnlyOrders.length > 0" class="section-count">
+                {{ pageOnlyOrders.length }}
+              </span>
+              <span
+                v-if="pageOnlyOrders.length > 0"
+                class="section-caret"
+                :class="{ open: expanded.pageOnly }"
+                >▸</span
+              >
+              <span v-else class="section-ok">✓ 全都找到了</span>
+            </button>
+            <div v-if="pageOnlyOrders.length === 0" class="section-empty">
+              <template v-if="pageScannedCount >= 0">
+                页面扫描到 {{ pageScannedCount }} 个订单，表格里的订单全部命中
+              </template>
+              <template v-else>未扫描到页面订单行</template>
             </div>
-            <div class="orders-list">
+            <div v-else-if="expanded.pageOnly" class="orders-list section-badges">
+              <span
+                v-for="orderNumber in pageOnlyOrders"
+                :key="orderNumber"
+                class="order-badge order-badge-neutral"
+              >
+                {{ orderNumber }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="matchedOrders.length > 0" class="match-section">
+            <button
+              type="button"
+              class="section-toggle"
+              @click="toggleSection('matched')"
+            >
+              <span class="section-title">承运商命中已有选项</span>
+              <span class="section-count">{{ matchedOrders.length }}</span>
+              <span class="section-caret" :class="{ open: expanded.matched }"
+                >▸</span
+              >
+            </button>
+            <div v-if="expanded.matched" class="orders-list section-badges">
               <span
                 v-for="orderNumber in matchedOrders"
                 :key="orderNumber"
@@ -531,11 +621,23 @@ const handleDownloadTemplate = () => {
             </div>
           </div>
 
-          <div v-if="fallbackOrders.length > 0" class="matched-orders">
-            <div class="orders-label orders-label-warn">
-              匹配不到承运商，已选 Other 并填入名称：
-            </div>
-            <div class="orders-list">
+          <div v-if="fallbackOrders.length > 0" class="match-section">
+            <button
+              type="button"
+              class="section-toggle"
+              @click="toggleSection('fallback')"
+            >
+              <span class="section-title section-title-warn"
+                >匹配不到承运商，已选 Other 并填入名称</span
+              >
+              <span class="section-count section-count-warn">
+                {{ fallbackOrders.length }}
+              </span>
+              <span class="section-caret" :class="{ open: expanded.fallback }"
+                >▸</span
+              >
+            </button>
+            <div v-if="expanded.fallback" class="orders-list section-badges">
               <span
                 v-for="item in fallbackOrders"
                 :key="item.orderNumber"
@@ -546,11 +648,23 @@ const handleDownloadTemplate = () => {
             </div>
           </div>
 
-          <div v-if="failedOrders.length > 0" class="matched-orders">
-            <div class="orders-label orders-label-error">
-              未填写（{{ failedOrders.length }} 个）：
-            </div>
-            <ul class="failed-list">
+          <div v-if="failedOrders.length > 0" class="match-section">
+            <button
+              type="button"
+              class="section-toggle"
+              @click="toggleSection('failed')"
+            >
+              <span class="section-title section-title-error"
+                >未填写（{{ failedOrders.length }} 个）</span
+              >
+              <span class="section-count section-count-error">
+                {{ failedOrders.length }}
+              </span>
+              <span class="section-caret" :class="{ open: expanded.failed }"
+                >▸</span
+              >
+            </button>
+            <ul v-if="expanded.failed" class="failed-list">
               <li v-for="item in failedOrders" :key="item.orderNumber">
                 <strong>{{ item.orderNumber }}</strong
                 >：{{ item.reason }}
@@ -882,16 +996,103 @@ const handleDownloadTemplate = () => {
   font-size: 12px;
 }
 
-.matched-orders {
+/* 可收展的分组 */
+.match-section {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #bbf7d0;
+  border-top: 1px solid #d1d5db;
 }
 
-.orders-label {
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 14px;
   font-weight: 500;
-  margin-bottom: 8px;
   color: #166534;
+  text-align: left;
+  cursor: pointer;
+}
+
+.section-toggle:hover {
+  opacity: 0.75;
+}
+
+.section-toggle-static {
+  cursor: default;
+}
+
+.section-toggle-static:hover {
+  opacity: 1;
+}
+
+.section-title-warn {
+  color: #b45309;
+}
+
+.section-title-error {
+  color: #b91c1c;
+}
+
+.section-toggle .section-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.section-count {
+  flex: 0 0 auto;
+  min-width: 20px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: #e5e7eb;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.section-count-warn {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.section-count-error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.section-caret {
+  margin-left: auto;
+  font-size: 12px;
+  line-height: 1;
+  color: #6b7280;
+  transition: transform 0.15s ease;
+}
+
+.section-caret.open {
+  transform: rotate(90deg);
+}
+
+.section-ok {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: #16a34a;
+}
+
+.section-empty {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.section-badges {
+  margin-top: 8px;
 }
 
 .orders-list {
@@ -916,12 +1117,10 @@ const handleDownloadTemplate = () => {
   border-color: #fde68a;
 }
 
-.orders-label-warn {
-  color: #b45309;
-}
-
-.orders-label-error {
-  color: #b91c1c;
+.order-badge-neutral {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: #e5e7eb;
 }
 
 .match-result-has-failed {
@@ -929,7 +1128,7 @@ const handleDownloadTemplate = () => {
 }
 
 .failed-list {
-  margin: 0;
+  margin: 8px 0 0;
   padding-left: 18px;
   color: #b91c1c;
   font-size: 12px;
