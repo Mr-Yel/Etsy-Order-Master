@@ -1,15 +1,22 @@
 <script lang="ts" setup>
-import { reactive, ref } from "vue";
+import { onMounted, onUnmounted, reactive, ref } from "vue";
 import Papa from "papaparse";
 import {
+  annotateOrderRows,
   fillCarrierNamesBatch,
   fillOrdersBatch,
   nextPaint,
   scanOrderRows,
+  updateOrderCountLabel,
   waitForCarrierNameInputs,
 } from "@/utils/dom-utils";
+import type { OrderRowIssue } from "@/utils/dom-utils";
 import { downloadCSVTemplate } from "@/utils/csv-utils";
 import VersionTag from "@/components/VersionTag.vue";
+import {
+  IS_TEST_BUILD,
+  getRuntimeScopedId,
+} from "@/lib/runtime-identity";
 
 // 订单数据类型定义
 type OrderData = {
@@ -19,6 +26,7 @@ type OrderData = {
 };
 
 const isOpen = ref(false);
+const fileInputRef = ref<HTMLInputElement | null>(null);
 const selectedFile = ref<File | null>(null);
 const fileContent = ref<string>("");
 const parseError = ref<string>("");
@@ -38,6 +46,8 @@ const matchCount = ref(0);
 const pageOnlyOrders = ref<string[]>([]);
 /** 页面扫描到的订单总数；-1 表示未扫描或扫描失败 */
 const pageScannedCount = ref(-1);
+const fileInputId = getRuntimeScopedId("file-upload-input");
+const runtimeOwner = IS_TEST_BUILD ? "test" : "production";
 
 /** 各分组的展开状态：默认全部收缩 */
 const expanded = reactive({
@@ -58,6 +68,121 @@ const resetSections = () => {
   expanded.fallback = false;
   expanded.failed = false;
 };
+
+/** 把当前结果映射到页面对应订单卡片；重复订单会合并所有异常原因 */
+const collectOrderRowIssues = (): OrderRowIssue[] => {
+  const issueMap = new Map<string, string[]>();
+  const addIssue = (orderNumber: string, reason: string) => {
+    const normalizedOrderNumber = orderNumber.trim();
+    const normalizedReason = reason.trim();
+    if (!normalizedOrderNumber || !normalizedReason) return;
+
+    const reasons = issueMap.get(normalizedOrderNumber) ?? [];
+    if (!reasons.includes(normalizedReason)) {
+      reasons.push(normalizedReason);
+      issueMap.set(normalizedOrderNumber, reasons);
+    }
+  };
+
+  pageOnlyOrders.value.forEach((orderNumber) => {
+    addIssue(orderNumber, "上传表格中未找到该订单号");
+  });
+  failedOrders.value.forEach((item) => {
+    addIssue(item.orderNumber, item.reason);
+  });
+
+  return Array.from(issueMap, ([orderNumber, reasons]) => ({
+    orderNumber,
+    reason: reasons.join("；"),
+  }));
+};
+
+const refreshOrderRowAnnotations = () => {
+  try {
+    const result = annotateOrderRows(collectOrderRowIssues());
+    updateOrderCountLabel({
+      total: result.annotated,
+      filled: matchCount.value,
+      owner: runtimeOwner,
+      claim: isProcessing.value || parsedData.value.length > 0,
+    });
+    console.info(
+      `[EOM] 页面订单标注：识别 ${result.annotated} 行，标红 ${result.marked} 行`
+    );
+    if (result.missingOrderNumbers.length > 0) {
+      console.warn(
+        `⚠️ 以下异常订单未找到对应页面表单，无法标红:`,
+        result.missingOrderNumbers
+      );
+    }
+  } catch (error) {
+    console.warn("⚠️ 更新页面订单行标记失败:", error);
+  }
+};
+
+let annotationObserver: MutationObserver | null = null;
+let annotationTimer: number | null = null;
+const ORDER_NUMBER_LABEL_CLASS = "eom-order-number-label";
+const ORDER_COUNT_LABEL_CLASS = "eom-order-count-label";
+const ORDER_ERROR_REASON_CLASS = getRuntimeScopedId(
+  "eom-order-row-error-reason"
+);
+
+const isOwnAnnotationNode = (node: Node): boolean => {
+  if (!(node instanceof Element)) return false;
+  return (
+    node.classList.contains(ORDER_NUMBER_LABEL_CLASS) ||
+    node.classList.contains(ORDER_COUNT_LABEL_CLASS) ||
+    node.classList.contains(ORDER_ERROR_REASON_CLASS)
+  );
+};
+
+const hasExternalDomMutation = (records: MutationRecord[]): boolean =>
+  records.some(
+    (record) =>
+      Array.from(record.addedNodes).some(
+        (node) => !isOwnAnnotationNode(node)
+      ) ||
+      Array.from(record.removedNodes).some(
+        (node) => !isOwnAnnotationNode(node)
+      )
+  );
+
+/** DOM 变化通常是一组连续提交，合并到下一轮再标注 */
+const scheduleOrderRowAnnotations = (delayMs = 80) => {
+  if (annotationTimer !== null) {
+    window.clearTimeout(annotationTimer);
+  }
+  annotationTimer = window.setTimeout(() => {
+    annotationTimer = null;
+    refreshOrderRowAnnotations();
+  }, delayMs);
+};
+
+onMounted(() => {
+  // 表单页出现时先立即尝试，再继续监听 Etsy 后续渲染出的订单卡片
+  scheduleOrderRowAnnotations(0);
+  const annotationRoot =
+    document.getElementById("mark-as-complete-overlay") ?? document.body;
+  annotationObserver = new MutationObserver((records) => {
+    if (!isProcessing.value && hasExternalDomMutation(records)) {
+      scheduleOrderRowAnnotations();
+    }
+  });
+  annotationObserver.observe(annotationRoot, {
+    childList: true,
+    subtree: true,
+  });
+});
+
+onUnmounted(() => {
+  annotationObserver?.disconnect();
+  annotationObserver = null;
+  if (annotationTimer !== null) {
+    window.clearTimeout(annotationTimer);
+    annotationTimer = null;
+  }
+});
 
 const togglePanel = () => {
   isOpen.value = !isOpen.value;
@@ -199,6 +324,7 @@ const fillFormFields = async (orderData: OrderData[]) => {
   pageScannedCount.value = -1;
   matchCount.value = 0;
   resetSections();
+  refreshOrderRowAnnotations();
 
   const startedAt = Date.now();
 
@@ -244,6 +370,9 @@ const fillFormFields = async (orderData: OrderData[]) => {
         `⚠️ 表单存在但表格未找到 ${pageOnlyOrders.value.length} 单:`,
         pageOnlyOrders.value
       );
+      // 表单页订单与上传表格完全不重合时，也应立即标出这些页面订单
+      await nextPaint();
+      refreshOrderRowAnnotations();
     }
   }
 
@@ -369,6 +498,8 @@ const fillFormFields = async (orderData: OrderData[]) => {
   }
 
   matchCount.value = matchedOrders.value.length + fallbackOrders.value.length;
+  await nextPaint();
+  refreshOrderRowAnnotations();
   isProcessing.value = false;
   processStage.value = "";
 
@@ -402,11 +533,9 @@ const clearFile = () => {
   isProcessing.value = false;
   processStage.value = "";
   resetSections();
-  const input = document.querySelector(
-    'input[type="file"]'
-  ) as HTMLInputElement;
-  if (input) {
-    input.value = "";
+  refreshOrderRowAnnotations();
+  if (fileInputRef.value) {
+    fileInputRef.value.value = "";
   }
 };
 
@@ -421,13 +550,16 @@ const handleDownloadTemplate = () => {
 </script>
 
 <template>
-  <div class="file-upload-widget">
+  <div
+    class="file-upload-widget"
+    :class="{ 'file-upload-widget--test': IS_TEST_BUILD }"
+  >
     <!-- 右下角按钮 -->
     <button
       class="toggle-button"
       @click="togglePanel"
       :class="{ active: isOpen }"
-      title="打开文件上传"
+      :title="IS_TEST_BUILD ? '打开文件上传（测试）' : '打开文件上传'"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -444,13 +576,17 @@ const handleDownloadTemplate = () => {
         <polyline points="17 8 12 3 7 8"></polyline>
         <line x1="12" y1="3" x2="12" y2="15"></line>
       </svg>
+      <span v-if="IS_TEST_BUILD" class="toggle-runtime-badge">测试</span>
     </button>
 
     <!-- 浮窗面板 -->
     <div v-if="isOpen" class="upload-panel">
       <div class="panel-header">
         <div class="header-left">
-          <h3>文件上传</h3>
+          <h3>
+            文件上传
+            <span v-if="IS_TEST_BUILD" class="header-runtime-badge">测试</span>
+          </h3>
           <VersionTag size="sm" tone="inverse" />
           <button
             class="download-template-button-icon"
@@ -495,13 +631,14 @@ const handleDownloadTemplate = () => {
       <div class="panel-content">
         <div class="upload-area">
           <input
+            ref="fileInputRef"
             type="file"
-            id="file-input"
+            :id="fileInputId"
             accept=".csv"
             @change="handleFileSelect"
             class="file-input"
           />
-          <label for="file-input" class="upload-label">
+          <label :for="fileInputId" class="upload-label">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="48"
@@ -687,6 +824,10 @@ const handleDownloadTemplate = () => {
     "Helvetica Neue", Arial, sans-serif;
 }
 
+.file-upload-widget--test {
+  right: 92px;
+}
+
 .toggle-button {
   width: 56px;
   height: 56px;
@@ -710,6 +851,29 @@ const handleDownloadTemplate = () => {
 
 .toggle-button.active {
   background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.file-upload-widget--test .toggle-button {
+  background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+}
+
+.file-upload-widget--test .toggle-button.active {
+  background: linear-gradient(135deg, #f97316 0%, #dc2626 100%);
+}
+
+.toggle-runtime-badge {
+  position: absolute;
+  top: -7px;
+  right: -10px;
+  padding: 2px 6px;
+  border: 1px solid #fff;
+  border-radius: 9px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.25);
 }
 
 .upload-panel {
@@ -756,8 +920,25 @@ const handleDownloadTemplate = () => {
 
 .panel-header h3 {
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 18px;
   font-weight: 600;
+}
+
+.file-upload-widget--test .panel-header {
+  background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+}
+
+.header-runtime-badge {
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 4px;
+  background: rgba(127, 29, 29, 0.32);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .close-button {
