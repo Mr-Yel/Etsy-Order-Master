@@ -47,12 +47,17 @@ declare module "@/lib/kst-ship-by-date-sync-utils.mjs" {
 
 declare module "@/lib/order-list-query-utils.mjs" {
   export const ORDER_PAGE_SIZE_OPTIONS: readonly [10, 20, 50];
+  export const MAX_ORDER_SEARCH_IDS: number;
   export function normalizeOrderPageSize(
     value: unknown,
     fallback?: number
   ): number;
   export function normalizeOrderPage(value: unknown): number;
   export function getOrderPageOffset(page: unknown, pageSize: unknown): number;
+  export function parseOrderSearchInput(value: unknown): {
+    values: string[];
+    exceedsLimit: boolean;
+  };
   export function buildOrderListQueryParams(
     baseParams: Record<string, string>,
     query: {
@@ -63,4 +68,15 @@ declare module "@/lib/order-list-query-utils.mjs" {
       omitOrderStateOnSearch?: boolean;
     }
   ): Record<string, string>;
+}
+
+declare module "@/lib/order-merge-utils.mjs" {
+  export function collectOrderIdsForMerge(
+    rows: Array<Record<string, unknown>>,
+    orderIdKey?: string
+  ): string[];
+  export function mergeOrderRowsForExport<T extends Record<string, unknown>>(
+    rows: T[],
+    orderIdKey?: string
+  ): T[];
 }

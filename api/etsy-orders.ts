@@ -5,11 +5,14 @@ import type {
   EtsyOrder,
   EtsyOrdersSearchResponse,
 } from "@/types/etsy-order";
+import { buildOrderListQueryParams } from "@/lib/order-list-query-utils.mjs";
 
 export type EtsyOrderListBaseParams = Record<string, string>;
 
 export type EtsyFetchOrderListOptions = {
   credentials?: RequestCredentials;
+  /** 批量精确搜索时单个订单号命中数通常很少，可关闭短页 warning */
+  suppressShortPageWarning?: boolean;
 };
 
 export type EtsyFetchOrderListResult = {
@@ -17,6 +20,12 @@ export type EtsyFetchOrderListResult = {
   buyers: EtsyBuyer[];
   totalCount?: number;
   totalSearchHitCount?: number;
+};
+
+export type EtsyOrderBatchSearchResult = {
+  orders: EtsyOrder[];
+  buyers: EtsyBuyer[];
+  missingOrderIds: string[];
 };
 
 /**
@@ -124,7 +133,7 @@ export async function fetchEtsyOrdersPage(
   const data = (await res.json()) as EtsyOrdersSearchResponse;
   const collection = data?.orders_search;
   const orders = collection?.orders ?? [];
-  if (orders.length < limit) {
+  if (orders.length < limit && options?.suppressShortPageWarning !== true) {
     console.warn("[EOM] 服务端返回订单数少于请求的 limit", {
       requested: limit,
       received: orders.length,
@@ -136,6 +145,81 @@ export async function fetchEtsyOrdersPage(
     buyers: collection?.buyers ?? [],
     totalCount: collection?.total_count,
     totalSearchHitCount: collection?.total_search_hit_count,
+  };
+}
+
+/**
+ * Etsy 的 search_terms 只接受一个搜索串，没有批量订单号参数。
+ * 多订单号搜索时逐个查询，再按 order_id 精确过滤并合并结果。
+ */
+export async function fetchEtsyOrdersBySearchIds(
+  shopId: number,
+  orderIds: string[],
+  baseParams: EtsyOrderListBaseParams,
+  options?: EtsyFetchOrderListOptions
+): Promise<EtsyOrderBatchSearchResult> {
+  const uniqueOrderIds = Array.from(
+    new Set(orderIds.map((orderId) => orderId.trim()).filter(Boolean))
+  );
+  if (uniqueOrderIds.length === 0) {
+    return { orders: [], buyers: [], missingOrderIds: [] };
+  }
+
+  const batchLimit = 50;
+  const settled = await Promise.allSettled(
+    uniqueOrderIds.map((orderId) => {
+      const params = buildOrderListQueryParams(baseParams, {
+        page: 1,
+        pageSize: batchLimit,
+        searchTerms: orderId,
+        omitOrderState: true,
+      });
+      return fetchEtsyOrdersPage(shopId, params, batchLimit, 0, {
+        ...options,
+        suppressShortPageWarning: true,
+      });
+    })
+  );
+
+  const failedOrderIds: string[] = [];
+  const ordersBySearchId = new Map<string, EtsyOrder>();
+  const buyersByBuyerId = new Map<number, EtsyBuyer>();
+
+  settled.forEach((result, index) => {
+    const searchId = uniqueOrderIds[index];
+    if (result.status === "rejected") {
+      failedOrderIds.push(searchId);
+      return;
+    }
+
+    const exactOrder = result.value.orders.find(
+      (order) => String(order.order_id) === searchId
+    );
+    if (!exactOrder) return;
+
+    ordersBySearchId.set(searchId, exactOrder);
+    if (exactOrder.buyer_id == null) return;
+
+    const buyer = result.value.buyers.find(
+      (item) => item.buyer_id === exactOrder.buyer_id
+    );
+    if (buyer?.buyer_id != null && !buyersByBuyerId.has(buyer.buyer_id)) {
+      buyersByBuyerId.set(buyer.buyer_id, buyer);
+    }
+  });
+
+  if (failedOrderIds.length > 0) {
+    throw new Error(`订单号查询失败：${failedOrderIds.join(", ")}`);
+  }
+
+  return {
+    orders: uniqueOrderIds
+      .map((orderId) => ordersBySearchId.get(orderId))
+      .filter((order): order is EtsyOrder => order != null),
+    buyers: Array.from(buyersByBuyerId.values()),
+    missingOrderIds: uniqueOrderIds.filter(
+      (orderId) => !ordersBySearchId.has(orderId)
+    ),
   };
 }
 

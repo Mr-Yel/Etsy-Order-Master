@@ -3,9 +3,11 @@ import { test } from "node:test";
 import {
   buildOrderListQueryParams,
   getOrderPageOffset,
+  MAX_ORDER_SEARCH_IDS,
   normalizeOrderPage,
   normalizeOrderPageSize,
   ORDER_PAGE_SIZE_OPTIONS,
+  parseOrderSearchInput,
 } from "../lib/order-list-query-utils.mjs";
 
 test("normalizes order page size to the allowed dropdown values", () => {
@@ -23,6 +25,36 @@ test("normalizes order page and calculates offset", () => {
   assert.equal(normalizeOrderPage(0), 1);
   assert.equal(normalizeOrderPage("bad"), 1);
   assert.equal(getOrderPageOffset(3, 20), 40);
+});
+
+test("parses comma and newline separated order numbers without changing input", () => {
+  assert.deepEqual(
+    parseOrderSearchInput(" 4077329782, 4077329783\r\n4077329784\n"),
+    {
+      values: ["4077329782", "4077329783", "4077329784"],
+      exceedsLimit: false,
+    }
+  );
+  assert.deepEqual(parseOrderSearchInput("4077329782，4077329783、4077329784"), {
+    values: ["4077329782", "4077329783", "4077329784"],
+    exceedsLimit: false,
+  });
+});
+
+test("deduplicates order numbers and enforces the five order limit", () => {
+  assert.deepEqual(parseOrderSearchInput("1,1\n2"), {
+    values: ["1", "2"],
+    exceedsLimit: false,
+  });
+  assert.equal(MAX_ORDER_SEARCH_IDS, 5);
+  assert.deepEqual(parseOrderSearchInput("1,2,3,4,5"), {
+    values: ["1", "2", "3", "4", "5"],
+    exceedsLimit: false,
+  });
+  assert.deepEqual(parseOrderSearchInput("1,2,3,4,5,6"), {
+    values: ["1", "2", "3", "4", "5", "6"],
+    exceedsLimit: true,
+  });
 });
 
 test("builds Etsy order list params with limit, offset, and trimmed search terms", () => {

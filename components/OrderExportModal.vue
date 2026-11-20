@@ -8,24 +8,32 @@ import {
 import {
   getOrderListBaseParams,
 } from "@/composables/useFetchOrderList";
-import { fetchEtsyOrdersPage } from "@/api/etsy-orders";
+import {
+  fetchEtsyOrdersBySearchIds,
+  fetchEtsyOrdersPage,
+} from "@/api/etsy-orders";
 import {
   buildOrderListQueryParams,
   getOrderPageOffset,
+  MAX_ORDER_SEARCH_IDS,
   normalizeOrderPage,
   normalizeOrderPageSize,
   ORDER_PAGE_SIZE_OPTIONS,
+  parseOrderSearchInput,
 } from "@/lib/order-list-query-utils.mjs";
 import {
   EXPORT_COLUMNS,
   mapOrdersToTableRows,
   type ExportTableRow,
 } from "@/utils/orders-mapping";
+import { mergeOrderRowsForExport } from "@/lib/order-merge-utils.mjs";
 import * as XLSX from "xlsx";
 import { syncOrdersToKst } from "@/lib/kst-order-sync";
 import { useAuth } from "@/composables/useAuth";
 import { useNotyf } from "@/composables/useNotyf";
+import OrderNumberSearchInput from "@/components/OrderNumberSearchInput.vue";
 import VersionTag from "@/components/VersionTag.vue";
+import type { EtsyBuyer, EtsyOrder } from "@/types/etsy-order";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const { isLoggedIn, openLoginPage, loadUser } = useAuth();
@@ -40,8 +48,9 @@ const selectedOrderStateId = ref<number | "">("");
 const pageSize = ref(20);
 const currentPage = ref(1);
 const searchTerms = ref("");
-/** 最近一次实际请求使用的搜索词，用于展示「搜索范围」提示 */
-const appliedSearchTerms = ref("");
+/** 最近一次实际请求使用的订单号，用于展示搜索范围和批量命中情况 */
+const appliedSearchIds = ref<string[]>([]);
+const missingSearchIds = ref<string[]>([]);
 const totalOrders = ref<number | null>(null);
 const isSyncingToKst = ref(false);
 
@@ -62,6 +71,29 @@ const canGoNext = computed(() => {
   if (totalPages.value != null) return currentPage.value < totalPages.value;
   return rows.value.length >= pageSize.value;
 });
+
+const searchHint = computed(() => {
+  if (appliedSearchIds.value.length > 1) {
+    const foundCount =
+      appliedSearchIds.value.length - missingSearchIds.value.length;
+    return `批量搜索：找到 ${foundCount} / ${appliedSearchIds.value.length} 个订单`;
+  }
+  return appliedSearchIds.value.length === 1 ? "搜索范围：全部状态" : "";
+});
+
+const missingSearchHint = computed(() =>
+  missingSearchIds.value.length > 0
+    ? `未找到：${missingSearchIds.value.join(", ")}`
+    : ""
+);
+
+const actionsDisabled = computed(
+  () =>
+    loading.value ||
+    isSyncingToKst.value ||
+    !!error.value ||
+    selectedRows.value.length === 0
+);
 
 const groupedRowMeta = computed(() => {
   let currentGroup = -1;
@@ -208,28 +240,58 @@ async function fetchOrders(options?: {
       }
     }
 
+    const parsedSearch = parseOrderSearchInput(searchTerms.value);
+    if (parsedSearch.exceedsLimit) {
+      error.value = `最多支持搜索 ${MAX_ORDER_SEARCH_IDS} 个订单号`;
+      return;
+    }
+
+    const searchIds = parsedSearch.values;
     const stateId =
       selectedOrderStateId.value !== "" ? String(selectedOrderStateId.value) : "";
-    const searchText = searchTerms.value.trim();
-    const baseParams = buildOrderListQueryParams(
-      getOrderListBaseParams(stateId),
-      {
-        page: currentPage.value,
-        pageSize: pageSize.value,
-        searchTerms: searchText,
-        omitOrderState: stateId === "",
-        omitOrderStateOnSearch: true,
-      }
-    );
+    let orderList: EtsyOrder[] = [];
+    let buyers: EtsyBuyer[] = [];
+    let totalSearchHitCount: number | undefined;
+    let totalCount: number | undefined;
+    let missingOrderIds: string[] = [];
 
-    const { orders: orderList, buyers, totalSearchHitCount, totalCount } =
-      await fetchEtsyOrdersPage(
+    if (searchIds.length > 1) {
+      const batchResult = await fetchEtsyOrdersBySearchIds(
+        etsy.shopId,
+        searchIds,
+        getOrderListBaseParams(""),
+        { credentials: "include" }
+      );
+      orderList = batchResult.orders;
+      buyers = batchResult.buyers;
+      totalSearchHitCount = orderList.length;
+      totalCount = orderList.length;
+      missingOrderIds = batchResult.missingOrderIds;
+      currentPage.value = 1;
+    } else {
+      const searchText = searchIds[0] ?? "";
+      const baseParams = buildOrderListQueryParams(
+        getOrderListBaseParams(stateId),
+        {
+          page: currentPage.value,
+          pageSize: pageSize.value,
+          searchTerms: searchText,
+          omitOrderState: stateId === "",
+          omitOrderStateOnSearch: true,
+        }
+      );
+      const pageResult = await fetchEtsyOrdersPage(
         etsy.shopId,
         baseParams,
         pageSize.value,
         getOrderPageOffset(currentPage.value, pageSize.value),
         { credentials: "include" }
       );
+      orderList = pageResult.orders;
+      buyers = pageResult.buyers;
+      totalSearchHitCount = pageResult.totalSearchHitCount;
+      totalCount = pageResult.totalCount;
+    }
 
     // 暂时停用详情接口，只使用列表接口数据生成表格。
     // 如需恢复 Card Processing Fees，可重新启用 earnings details 请求并传入 earningsByOrderId。
@@ -266,7 +328,8 @@ async function fetchOrders(options?: {
     );
     // 换页/换筛选后行分组已变，折叠状态一并重置（仅展示态）
     collapsedGroups.value = new Set();
-    appliedSearchTerms.value = searchText;
+    appliedSearchIds.value = searchIds;
+    missingSearchIds.value = missingOrderIds;
     totalOrders.value = totalSearchHitCount ?? totalCount ?? orderList.length;
 
     if (totalPages.value != null && currentPage.value > totalPages.value) {
@@ -318,20 +381,25 @@ function goNextPage() {
   goToPage(currentPage.value + 1);
 }
 
-function exportSelected() {
-  const data = selectedRows.value;
+function exportSelected(mergeOrderIds = false) {
+  const data = mergeOrderIds
+    ? mergeOrderRowsForExport(selectedRows.value)
+    : selectedRows.value;
   if (data.length === 0) {
     return;
   }
   const ws = XLSX.utils.json_to_sheet(data, { header: [...columns] });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Orders");
-  const name = `orders-new-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  const prefix = mergeOrderIds ? "orders-merged" : "orders-new";
+  const name = `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`;
   XLSX.writeFile(wb, name);
 }
 
-async function syncSelectedToKst() {
-  const data = selectedRows.value;
+async function syncSelectedToKst(mergeOrderIds = false) {
+  const data = mergeOrderIds
+    ? mergeOrderRowsForExport(selectedRows.value)
+    : selectedRows.value;
   if (data.length === 0) {
     notyf.error("请先选择要同步的订单");
     return;
@@ -362,7 +430,9 @@ async function syncSelectedToKst() {
       shopId: etsy.shopId,
       rows: data,
       logContext: {
-        source: "manual_order_export_modal",
+        source: mergeOrderIds
+          ? "manual_order_export_modal_merged"
+          : "manual_order_export_modal",
         pageUrl: location.href,
       },
     });
@@ -451,16 +521,32 @@ onMounted(() => {
             </select>
           </label>
           <div class="search-wrap">
-            <label class="search-label" for="order-search-input">订单号</label>
-            <input
-              id="order-search-input"
+            <div class="search-label-row">
+              <label class="search-label" for="order-search-input">订单号</label>
+              <span class="search-help-wrap">
+                <button
+                  type="button"
+                  class="search-help-trigger"
+                  aria-label="查看订单号搜索规则"
+                  aria-describedby="order-search-help"
+                >
+                  ?
+                </button>
+                <span
+                  id="order-search-help"
+                  class="search-help-tooltip"
+                  role="tooltip"
+                >
+                  支持多个订单号，使用逗号或换行分隔，最多 5
+                  个。订单号搜索范围为全部订单，会默认去掉状态。
+                </span>
+              </span>
+            </div>
+            <OrderNumberSearchInput
               v-model="searchTerms"
-              type="search"
-              inputmode="numeric"
-              class="search-input"
-              placeholder="输入订单号"
+              input-id="order-search-input"
+              placeholder="支持多个订单号，用逗号或换行分隔"
               :disabled="loading"
-              @keydown.enter.prevent="applySearch"
               @search="applySearch"
             />
             <button
@@ -471,8 +557,15 @@ onMounted(() => {
             >
               搜索
             </button>
-            <span v-if="appliedSearchTerms" class="search-scope-hint">
-              搜索范围：全部状态
+            <span v-if="searchHint" class="search-scope-hint">
+              {{ searchHint }}
+            </span>
+            <span
+              v-if="missingSearchHint"
+              class="search-missing-hint"
+              :title="missingSearchHint"
+            >
+              {{ missingSearchHint }}
             </span>
           </div>
           <div class="pagination-wrap">
@@ -634,24 +727,40 @@ onMounted(() => {
           </span>
           <VersionTag size="sm" />
         </div>
-       <div>
-        <button
-          type="button"
-          class="btn-export"
-          :disabled="loading || isSyncingToKst || !!error || selectedRows.length === 0"
-          @click="syncSelectedToKst"
-        >
-          同步到 KST 订单系统 (会自动进行去重)
-        </button>
-        <button
-          type="button"
-          class="btn-export"
-          :disabled="loading || isSyncingToKst || !!error || selectedRows.length === 0"
-          @click="exportSelected"
-        >
-          导出 Excel
-        </button>
-       </div>
+        <div class="footer-actions">
+          <button
+            type="button"
+            class="btn-export"
+            :disabled="actionsDisabled"
+            @click="syncSelectedToKst()"
+          >
+            同步到 KST 订单系统 (会自动进行去重)
+          </button>
+          <button
+            type="button"
+            class="btn-export"
+            :disabled="actionsDisabled"
+            @click="syncSelectedToKst(true)"
+          >
+            合并同步到 KST 订单系统
+          </button>
+          <button
+            type="button"
+            class="btn-export"
+            :disabled="actionsDisabled"
+            @click="exportSelected()"
+          >
+            导出 Excel
+          </button>
+          <button
+            type="button"
+            class="btn-export"
+            :disabled="actionsDisabled"
+            @click="exportSelected(true)"
+          >
+            合并导出 Excel
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -681,6 +790,8 @@ onMounted(() => {
 }
 
 .modal-header {
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -774,10 +885,94 @@ onMounted(() => {
   gap: 6px;
 }
 
+.search-wrap {
+  flex-wrap: wrap;
+}
+
 .search-label,
 .page-number-label {
   font-size: 14px;
   color: #6b7280;
+}
+
+.search-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.search-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.search-help-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  cursor: help;
+}
+
+.search-help-trigger:hover,
+.search-help-trigger:focus-visible {
+  color: #1d4ed8;
+  border-color: #93b4df;
+  outline: none;
+}
+
+.search-help-tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -8px;
+  z-index: 70;
+  width: min(260px, calc(100vw - 48px));
+  padding: 8px 10px;
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  pointer-events: none;
+  visibility: hidden;
+  background: #1f2937;
+  border-radius: 6px;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 24%);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    visibility 0.14s;
+}
+
+.search-help-tooltip::before {
+  position: absolute;
+  bottom: 100%;
+  left: 16px;
+  width: 0;
+  height: 0;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid #1f2937;
+  border-left: 5px solid transparent;
+  content: "";
+  transform: translateX(-50%);
+}
+
+.search-help-wrap:hover .search-help-tooltip,
+.search-help-wrap:focus-within .search-help-tooltip {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .search-scope-hint {
@@ -790,12 +985,13 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.search-input {
-  width: 160px;
-  padding: 6px 8px;
-  font-size: 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+.search-missing-hint {
+  max-width: 220px;
+  overflow: hidden;
+  color: #991b1b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .page-number-input {
@@ -806,7 +1002,6 @@ onMounted(() => {
   border-radius: 6px;
 }
 
-.search-input:disabled,
 .page-number-input:disabled {
   opacity: 0.7;
   cursor: not-allowed;
@@ -1059,6 +1254,7 @@ onMounted(() => {
   padding: 12px 20px;
   border-top: 1px solid #e5e7eb;
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
 }
@@ -1071,6 +1267,13 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .btn-export {
   padding: 10px 20px;
   font-size: 14px;
@@ -1080,10 +1283,6 @@ onMounted(() => {
   border: none;
   border-radius: 8px;
   cursor: pointer;
-}
-
-.btn-export {
-  margin-left: 12px;
 }
 
 .btn-export:hover:not(:disabled) {
