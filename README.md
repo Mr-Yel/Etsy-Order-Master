@@ -14,6 +14,11 @@ This template should help get you started developing with Vue 3 in WXT.
 
 其他：`pnpm run build:firefox` 为 Firefox 构建；`pnpm run zip` 可打 zip 包。
 
+## PodBack 接口
+
+PodBack 统一通过 background 代理访问，鉴权、预览图和生产图渲染流程见
+[docs/podback-integration.md](docs/podback-integration.md)。
+
 ## 测试版本工作流
 
 正式与测试构建由同一份代码生成。需要验证当前代码时：

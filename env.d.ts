@@ -4,6 +4,8 @@
  */
 interface ImportMetaEnv {
   readonly VITE_KST_BASE_URL: string;
+  readonly VITE_POD_API_BASE_URL: string;
+  readonly VITE_POD_API_KEY: string;
   readonly VITE_EOM_DEV_TOKEN?: string;
   readonly VITE_EOM_APP_LOG_ENABLED?: string;
   readonly VITE_EOM_APP_LOG_BASE_URL?: string;
@@ -11,6 +13,42 @@ interface ImportMetaEnv {
   readonly VITE_EOM_APP_LOG_CLIENT_SECRET?: string;
   /** 构建时从 package.json 注入的版本号 */
   readonly VITE_EOM_VERSION?: string;
+}
+
+declare module "@/lib/podback-utils.mjs" {
+  export class PodBackApiError extends Error {
+    code: string;
+    status: number;
+    type: string;
+  }
+
+  export function resolvePodBackError(
+    payload: unknown,
+    fallback?: string
+  ): {
+    code: string;
+    status: number;
+    type: string;
+    message: string;
+  };
+
+  export function unwrapPodBackData<T>(
+    payload: unknown,
+    fallback?: string
+  ): T;
+
+  export function buildPodBackHeaders(
+    apiKey: string,
+    token?: string,
+    customHeaders?: Record<string, string>
+  ): Record<string, string>;
+
+  export function toPodBackApiError(
+    error: unknown,
+    fallback?: string
+  ): PodBackApiError;
+
+  export function createPodBackIdempotencyKey(): string;
 }
 
 declare module "@/lib/kst-artwork-import-utils.mjs" {

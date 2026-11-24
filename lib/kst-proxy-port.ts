@@ -58,6 +58,12 @@ type RuntimePort = {
   };
 };
 
+function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 function waitForPortResult(port: RuntimePort): Promise<KstProxyResponse> {
   return new Promise((resolve, reject) => {
     const onMessage = (msg: unknown) => {
@@ -159,10 +165,25 @@ export function handleKstProxyPortConnection(
   };
 
   const fail = (error: unknown) => {
+    const value =
+      error && typeof error === "object"
+        ? (error as {
+            message?: string;
+            status?: number;
+            code?: number;
+            type?: string;
+          })
+        : null;
+    const status =
+      Number(value?.status) ||
+      (typeof value?.code === "number" ? value.code : undefined);
     respond({
       success: false,
       error:
         error instanceof Error ? error.message : String(error ?? "KST 代理传输失败"),
+      code: status,
+      type: value?.type,
+      reauthOn401: request?.reauthOn401 !== false,
     });
   };
 
@@ -170,32 +191,53 @@ export function handleKstProxyPortConnection(
     if (request == null || fileMeta == null) {
       throw new Error("缺少上传元数据");
     }
-    const blob = new Blob([bytes], {
-      type: fileMeta.mimeType ?? "application/octet-stream",
-    });
-    const data = await runKstProxyInBackground({
-      ...request,
-      formFile: {
-        blob,
-        fileName: fileMeta.fileName,
-        mimeType: fileMeta.mimeType,
-        fieldName: fileMeta.fieldName,
-      },
-    });
-    const body = data as { code?: number; msg?: string };
-    if (body?.code === 401 && options.onUnauthorized) {
-      respond(await options.onUnauthorized(body));
-      return;
-    }
-    if (body?.code === 401) {
-      respond({
-        success: false,
-        error: body?.msg ?? "登录已过期",
-        code: 401,
+    try {
+      const blob = new Blob([copyToArrayBuffer(bytes)], {
+        type: fileMeta.mimeType ?? "application/octet-stream",
       });
-      return;
+      const data = await runKstProxyInBackground({
+        ...request,
+        formFile: {
+          blob,
+          fileName: fileMeta.fileName,
+          mimeType: fileMeta.mimeType,
+          fieldName: fileMeta.fieldName,
+        },
+      });
+      const body = data as { code?: number; msg?: string };
+      if (body?.code === 401 && request.reauthOn401 !== false && options.onUnauthorized) {
+        respond(await options.onUnauthorized(body));
+        return;
+      }
+      if (body?.code === 401 && request.reauthOn401 !== false) {
+        respond({
+          success: false,
+          error: body?.msg ?? "登录已过期",
+          code: 401,
+          reauthOn401: true,
+        });
+        return;
+      }
+      respond({ success: true, data });
+    } catch (error) {
+      const status =
+        (error as { status?: number; code?: number } | null)?.status ??
+        (error as { code?: number } | null)?.code;
+      if (
+        status === 401 &&
+        request.reauthOn401 !== false &&
+        options.onUnauthorized
+      ) {
+        respond(
+          await options.onUnauthorized({
+            code: 401,
+            msg: error instanceof Error ? error.message : String(error),
+          })
+        );
+        return;
+      }
+      throw error;
     }
-    respond({ success: true, data });
   };
 
   const onMessage = (msg: unknown) => {

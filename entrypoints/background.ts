@@ -410,6 +410,21 @@ export default defineBackground(() => {
         if (shouldLog) {
           console.log("[KST-PROXY] 收到写请求", { method, path: req.path });
         }
+        const handleProxyUnauthorized = async (message?: string) => {
+          console.log("[KST] 检测到 401，执行 handle401");
+          const result = await handle401();
+          console.log("[KST] handle401 结果", {
+            autoLoggedIn: result.autoLoggedIn,
+            errorMessage: result.errorMessage,
+          });
+          sendResponse({
+            success: false as const,
+            error: result.errorMessage ?? message ?? "登录已过期",
+            code: 401,
+            autoLoggedIn: result.autoLoggedIn,
+            reauthOn401: true,
+          });
+        };
         runKstProxyInBackground({
           path: req.path,
           baseUrl: req.baseUrl,
@@ -420,6 +435,7 @@ export default defineBackground(() => {
           formFile: req.formFile,
           formFields: req.formFields,
           token: req.token,
+          reauthOn401: req.reauthOn401,
         })
           .then(async (data) => {
             const body = data as { code?: number; msg?: string };
@@ -431,32 +447,29 @@ export default defineBackground(() => {
                 msg: body?.msg,
               });
             }
-            if (body?.code === 401) {
-              console.log("[KST] 检测到 401，执行 handle401");
-              const result = await handle401();
-              console.log("[KST] handle401 结果", {
-                autoLoggedIn: result.autoLoggedIn,
-                errorMessage: result.errorMessage,
-              });
-              sendResponse({
-                success: false as const,
-                error: result.errorMessage ?? body?.msg ?? "登录已过期",
-                code: 401,
-                autoLoggedIn: result.autoLoggedIn,
-              });
+            if (body?.code === 401 && req.reauthOn401 !== false) {
+              await handleProxyUnauthorized(body?.msg);
               return;
             }
             sendResponse({ success: true as const, data });
           })
-          .catch((err: Error) => {
+          .catch(async (err: Error & { status?: number; code?: number; type?: string }) => {
             console.warn("[KST-PROXY] 请求失败", {
               method,
               path: req.path,
               error: err?.message ?? String(err),
             });
+            const status = err?.status ?? err?.code;
+            if (status === 401 && req.reauthOn401 !== false) {
+              await handleProxyUnauthorized(err?.message);
+              return;
+            }
             sendResponse({
               success: false as const,
               error: err?.message ?? String(err),
+              code: status,
+              type: err?.type,
+              reauthOn401: req.reauthOn401 !== false,
             });
           });
         return true;
@@ -480,6 +493,7 @@ export default defineBackground(() => {
           error: result.errorMessage ?? body?.msg ?? "登录已过期",
           code: 401,
           autoLoggedIn: result.autoLoggedIn,
+          reauthOn401: true,
         };
       },
     });

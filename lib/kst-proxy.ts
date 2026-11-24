@@ -14,11 +14,17 @@ function decodeBase64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
+function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 async function formFileToBlob(formFile: KstProxyFormFile): Promise<Blob> {
   if (formFile.blob != null) return formFile.blob;
   if (typeof formFile.base64 === "string" && formFile.base64.length > 0) {
     const bytes = decodeBase64ToBytes(formFile.base64);
-    return new Blob([bytes], {
+    return new Blob([copyToArrayBuffer(bytes)], {
       type: formFile.mimeType ?? "application/octet-stream",
     });
   }
@@ -45,8 +51,10 @@ export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unk
   const headers: Record<string, string> = {
     ...(customHeaders ?? {}),
     Accept: "application/json, text/plain, */*",
-    Authorization: `Bearer ${token}`,
   };
+  if (token?.trim()) {
+    headers.Authorization = `Bearer ${token.trim()}`;
+  }
 
   const init: RequestInit = {
     method,
@@ -80,10 +88,23 @@ export async function runKstProxyInBackground(req: KstProxyRequest): Promise<unk
   }
 
   if (!res.ok) {
+    const payload = data as
+      | { code?: number; msg?: string; message?: string; error?: { type?: string; message?: string } }
+      | null;
     const msg =
-      (data as { msg?: string } | null)?.msg ??
+      payload?.error?.message ??
+      payload?.msg ??
+      payload?.message ??
       `HTTP ${res.status} ${res.statusText}`.trim();
-    throw new Error(msg);
+    const error = new Error(msg) as Error & {
+      status?: number;
+      code?: number;
+      type?: string;
+    };
+    error.status = res.status;
+    error.code = payload?.code ?? res.status;
+    error.type = payload?.error?.type;
+    throw error;
   }
 
   return data;

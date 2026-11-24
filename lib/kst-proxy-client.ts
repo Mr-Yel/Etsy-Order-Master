@@ -11,7 +11,7 @@ import { KST_PROXY_MESSAGE_TYPE } from "./kst-proxy-types";
 import { shouldUseKstProxyPortTransfer } from "./kst-proxy-transfer.mjs";
 
 function handleKstProxyAuthError(payload: Extract<KstProxyResponse, { success: false }>) {
-  if (payload.code !== 401) return;
+  if (payload.code !== 401 || payload.reauthOn401 === false) return;
   try {
     if (payload.autoLoggedIn) {
       getNotyf().success("登录已过期，已自动重新登录");
@@ -44,7 +44,15 @@ export async function sendKstProxyRequest<T = unknown>(req: KstProxyRequest): Pr
   }
   if (payload?.success === false && payload.error) {
     handleKstProxyAuthError(payload);
-    throw new Error(payload.error);
+    const error = new Error(payload.error) as Error & {
+      code?: number;
+      type?: string;
+      reauthOn401?: boolean;
+    };
+    error.code = payload.code;
+    error.type = payload.type;
+    error.reauthOn401 = payload.reauthOn401;
+    throw error;
   }
   throw new Error(
     payload === undefined

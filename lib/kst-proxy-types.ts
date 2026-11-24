@@ -33,7 +33,13 @@ export type KstProxyRequest = {
   formFile?: KstProxyFormFile;
   /** multipart/form-data：其余表单字段 */
   formFields?: Record<string, string>;
-  token: string;
+  /** KST Bearer token；纯 API Key 接口可以不传 */
+  token?: string;
+  /**
+   * 收到 401 时是否按 KST 登录态失效处理。
+   * 默认 true；PodBack 等仅依赖 API Key 的请求应显式传 false。
+   */
+  reauthOn401?: boolean;
 };
 
 /** 去掉 blob 后的请求，可安全 JSON 序列化 */
@@ -53,8 +59,12 @@ export type KstProxyErrorResponse = {
   error: string;
   /** 401 时存在，表示 token 过期 */
   code?: number;
+  /** 上游结构化错误码，如 PodBack 的 INVALID_API_KEY */
+  type?: string;
   /** 401 后是否已用记住的凭据自动登录成功 */
   autoLoggedIn?: boolean;
+  /** 本次 401 是否按 KST 登录态失效处理 */
+  reauthOn401?: boolean;
 };
 
 export type KstProxyResponse = KstProxySuccessResponse | KstProxyErrorResponse;
