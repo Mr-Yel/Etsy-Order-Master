@@ -47,6 +47,17 @@ import {
   EOM_RUNTIME_CHANNEL,
   getRuntimeScopedId,
 } from "@/lib/runtime-identity";
+import {
+  ETSY_ORDER_SYNC_EVENT_MESSAGE_TYPE,
+  type EtsyOrderSyncEvent,
+  type EtsyOrderSyncMessage,
+} from "@/lib/etsy-order-sync-types";
+import {
+  buildCancellationReason,
+  evaluateBatchCompleteResponse,
+  evaluateCancelOrderResponse,
+  parseBatchCompleteRequest,
+} from "@/lib/etsy-order-sync-utils.mjs";
 
 const PAGE_INJECT_SCRIPT_ID = getRuntimeScopedId(
   "injected-script-page-inject.js"
@@ -459,6 +470,45 @@ export default defineContentScript({
         requestBody?: string | null;
       }
     >();
+    const pendingCancelOrderByRequestId = new Map<
+      string,
+      {
+        shopId?: string;
+        etsyOrderId?: string;
+        requestBody?: string | null;
+      }
+    >();
+    const pendingBatchCompleteByRequestId = new Map<
+      string,
+      {
+        shopId?: string;
+        requestBody?: string | null;
+      }
+    >();
+
+    const forwardConfirmedEtsyOrderSyncEvent = (
+      event: EtsyOrderSyncEvent
+    ) => {
+      void browser.runtime
+        .sendMessage({
+          type: ETSY_ORDER_SYNC_EVENT_MESSAGE_TYPE,
+          event,
+        } satisfies EtsyOrderSyncMessage)
+        .then((result) => {
+          traceLog("content.etsyOrderSync.forwarded", {
+            sourceType: event.type,
+            requestId: event.payload.requestId,
+            result,
+          });
+        })
+        .catch((error) => {
+          traceLog("content.etsyOrderSync.forward-failed", {
+            sourceType: event.type,
+            requestId: event.payload.requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    };
 
     /**
      * 当捕获到 move-orders 且 Etsy 响应成功时，直接同步到 KST 订单系统
@@ -676,6 +726,7 @@ export default defineContentScript({
             ok?: boolean;
             event?: string;
             payload?: {
+              source?: string;
               requestId?: string;
               url?: string;
               method?: string;
@@ -711,7 +762,9 @@ export default defineContentScript({
       const normalizedPayload =
         data?.type === ETSY_BRIDGE_EVENT_TYPE ? data.payload : data;
       const normalizedSource =
-        data?.type === ETSY_BRIDGE_EVENT_TYPE ? data.meta?.source : data?.source;
+        data?.type === ETSY_BRIDGE_EVENT_TYPE
+          ? normalizedPayload?.source ?? data.meta?.source
+          : data?.source;
 
       const normalizedMoveOrdersMessage =
         normalizedType === "moveOrders.requested" ||
@@ -744,6 +797,37 @@ export default defineContentScript({
               newShipByDate: normalizedPayload?.newShipByDate,
             }
           : null;
+      const normalizedCancelOrderMessage =
+        normalizedType === "cancelOrder.requested" ||
+        normalizedType === "cancelOrder.responded"
+          ? {
+              type: normalizedType,
+              source: normalizedSource,
+              requestId: normalizedPayload?.requestId,
+              url: normalizedPayload?.url,
+              method: normalizedPayload?.method,
+              body: normalizedPayload?.body,
+              status: normalizedPayload?.status,
+              ok: normalizedPayload?.ok,
+              shopId: normalizedPayload?.shopId,
+              etsyOrderId: normalizedPayload?.orderId,
+            }
+          : null;
+      const normalizedBatchCompleteMessage =
+        normalizedType === "batchComplete.requested" ||
+        normalizedType === "batchComplete.responded"
+          ? {
+              type: normalizedType,
+              source: normalizedSource,
+              requestId: normalizedPayload?.requestId,
+              url: normalizedPayload?.url,
+              method: normalizedPayload?.method,
+              body: normalizedPayload?.body,
+              status: normalizedPayload?.status,
+              ok: normalizedPayload?.ok,
+              shopId: normalizedPayload?.shopId,
+            }
+          : null;
 
       if (normalizedMoveOrdersMessage) {
         traceLog("content.moveOrders.message", {
@@ -753,6 +837,147 @@ export default defineContentScript({
           status: normalizedMoveOrdersMessage.status,
           ok: normalizedMoveOrdersMessage.ok,
         });
+      }
+
+      if (normalizedCancelOrderMessage) {
+        if (normalizedCancelOrderMessage.source !== "page-inject") {
+          return;
+        }
+
+        const requestId = normalizedCancelOrderMessage.requestId;
+        if (!requestId) return;
+
+        if (normalizedCancelOrderMessage.type === "cancelOrder.requested") {
+          pendingCancelOrderByRequestId.set(requestId, {
+            shopId: normalizedCancelOrderMessage.shopId,
+            etsyOrderId: normalizedCancelOrderMessage.etsyOrderId,
+            requestBody: normalizedCancelOrderMessage.body,
+          });
+          return;
+        }
+
+        const pending = pendingCancelOrderByRequestId.get(requestId);
+        if (!pending) return;
+        pendingCancelOrderByRequestId.delete(requestId);
+
+        const result = evaluateCancelOrderResponse(
+          Number(normalizedCancelOrderMessage.status),
+          normalizedCancelOrderMessage.body
+        );
+        const etsyOrderId = String(pending.etsyOrderId ?? "").trim();
+        if (!result.success || !etsyOrderId) {
+          emitLogsForOrderIds(
+            [etsyOrderId],
+            "etsy_cancel_order_sync_skipped",
+            {
+              requestId,
+              shopId: pending.shopId,
+              status: normalizedCancelOrderMessage.status,
+              reason: result.reason,
+              responseBody: normalizedCancelOrderMessage.body ?? "",
+              pageUrl: location.href,
+            },
+            "etsy_order_sync"
+          );
+          return;
+        }
+
+        const shopId = String(pending.shopId ?? "").trim();
+        if (!shopId) {
+          emitLogsForOrderIds(
+            [etsyOrderId],
+            "etsy_cancel_order_sync_missing_shop",
+            { requestId, pageUrl: location.href },
+            "etsy_order_sync"
+          );
+          return;
+        }
+
+        forwardConfirmedEtsyOrderSyncEvent({
+          type: "etsy-order-cancel-confirmed",
+          payload: {
+            requestId,
+            shopId,
+            etsyOrderId,
+            cancellationReason: buildCancellationReason(pending.requestBody),
+            etsyResult: {
+              httpStatus: result.httpStatus,
+              refundSuccess: true,
+              cancelSuccess: true,
+            },
+            occurredAt: new Date().toISOString(),
+            pageUrl: location.href,
+          },
+        });
+        return;
+      }
+
+      if (normalizedBatchCompleteMessage) {
+        if (normalizedBatchCompleteMessage.source !== "page-inject") {
+          return;
+        }
+
+        const requestId = normalizedBatchCompleteMessage.requestId;
+        if (!requestId) return;
+
+        if (normalizedBatchCompleteMessage.type === "batchComplete.requested") {
+          pendingBatchCompleteByRequestId.set(requestId, {
+            shopId: normalizedBatchCompleteMessage.shopId,
+            requestBody: normalizedBatchCompleteMessage.body,
+          });
+          return;
+        }
+
+        const pending = pendingBatchCompleteByRequestId.get(requestId);
+        if (!pending) return;
+        pendingBatchCompleteByRequestId.delete(requestId);
+
+        const requestedOrders = parseBatchCompleteRequest(pending.requestBody);
+        const result = evaluateBatchCompleteResponse(
+          Number(normalizedBatchCompleteMessage.status),
+          normalizedBatchCompleteMessage.body,
+          requestedOrders
+        );
+        if (!result.success || result.orders.length === 0) {
+          emitLogsForOrderIds(
+            requestedOrders.map((order) => order.orderId),
+            "etsy_complete_order_sync_skipped",
+            {
+              requestId,
+              shopId: pending.shopId,
+              status: normalizedBatchCompleteMessage.status,
+              reason: result.reason,
+              failures: result.failures,
+              responseBody: normalizedBatchCompleteMessage.body ?? "",
+              pageUrl: location.href,
+            },
+            "etsy_order_sync"
+          );
+          return;
+        }
+
+        const shopId = String(pending.shopId ?? "").trim();
+        if (!shopId) {
+          emitLogsForOrderIds(
+            result.orders.map((order) => order.etsyOrderId),
+            "etsy_complete_order_sync_missing_shop",
+            { requestId, pageUrl: location.href },
+            "etsy_order_sync"
+          );
+          return;
+        }
+
+        forwardConfirmedEtsyOrderSyncEvent({
+          type: "etsy-order-complete-confirmed",
+          payload: {
+            requestId,
+            shopId,
+            orders: result.orders,
+            occurredAt: new Date().toISOString(),
+            pageUrl: location.href,
+          },
+        });
+        return;
       }
 
       if (normalizedUpdateShipByDateMessage) {

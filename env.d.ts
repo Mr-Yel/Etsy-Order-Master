@@ -6,6 +6,10 @@ interface ImportMetaEnv {
   readonly VITE_KST_BASE_URL: string;
   readonly VITE_POD_API_BASE_URL: string;
   readonly VITE_POD_API_KEY: string;
+  /** observe: 只监听和记录；submit: 直接提交到 Etsy 订单同步 BFF */
+  readonly VITE_ETSY_ORDER_SYNC_MODE?: "observe" | "submit";
+  /** PodBack BFF 的插件入口 Key，仅作为入口过滤，不用于用户身份鉴权 */
+  readonly VITE_ETSY_ORDER_SYNC_BFF_KEY?: string;
   readonly VITE_EOM_DEV_TOKEN?: string;
   readonly VITE_EOM_APP_LOG_ENABLED?: string;
   readonly VITE_EOM_APP_LOG_BASE_URL?: string;
@@ -81,6 +85,71 @@ declare module "@/lib/kst-ship-by-date-sync-utils.mjs" {
     now?: number;
     randomIdPart?: string;
   }): string;
+}
+
+declare module "@/lib/etsy-order-sync-utils.mjs" {
+  export type ParsedBatchCompleteOrder = {
+    orderId: string;
+    trackingNumber?: string;
+    carrier?: string;
+    otherCarrier?: string;
+    note?: string;
+    shipDate?: string;
+  };
+
+  export function parseJsonObject(
+    bodyText: unknown
+  ): Record<string, unknown> | null;
+  export function parseBatchCompleteRequest(
+    bodyText: unknown
+  ): ParsedBatchCompleteOrder[];
+  export function resolveCompleteOrderCarrier(
+    order: ParsedBatchCompleteOrder
+  ): string | undefined;
+  export function evaluateCancelOrderResponse(
+    status: number,
+    bodyText: unknown
+  ): {
+    success: boolean;
+    reason?: string;
+    httpStatus: number;
+    refundSuccess?: boolean;
+    cancelSuccess?: boolean;
+    refundReason?: string;
+    cancelReason?: string;
+  };
+  export function evaluateBatchCompleteResponse(
+    status: number,
+    bodyText: unknown,
+    requestedOrders: ParsedBatchCompleteOrder[]
+  ): {
+    success: boolean;
+    reason?: string;
+    orders: Array<{
+      etsyOrderId: string;
+      trackingNumber?: string;
+      carrier?: string;
+    }>;
+    failures: string[];
+    successIds?: string[];
+  };
+  export function buildCancellationReason(bodyText: unknown): string | undefined;
+  export const ETSY_ORDER_CANCELLATION_BFF_PATH: string;
+  export const ETSY_ORDER_COMPLETION_BFF_PATH: string;
+  export function buildEtsyOrderSyncBffRequest(event: unknown): {
+    path: string;
+    body: Record<string, unknown>;
+  } | null;
+  export function evaluateEtsyOrderSyncBffResponse(response: unknown): {
+    accepted: boolean;
+    jobId?: string;
+    acceptedCount?: number;
+    error?: string;
+  };
+  export function resolveEtsyOrderSyncMode(
+    isTestBuild: boolean,
+    configuredMode?: string
+  ): "observe" | "submit";
 }
 
 declare module "@/lib/order-list-query-utils.mjs" {

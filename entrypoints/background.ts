@@ -35,6 +35,8 @@ import {
   closeOffscreenDocument,
   ensureOffscreenDocument,
 } from "@/lib/offscreen-host";
+import { ETSY_ORDER_SYNC_EVENT_MESSAGE_TYPE } from "@/lib/etsy-order-sync-types";
+import { dispatchEtsyOrderSyncEvent } from "@/lib/etsy-order-sync-dispatch";
 
 const DEFAULT_IMAGE_FETCH_TIMEOUT_MS = 30000;
 const DEFAULT_IMAGE_FETCH_CONCURRENCY = 4;
@@ -320,6 +322,36 @@ export default defineBackground(() => {
         void enqueueAppLogFromEvent(appLogMessage.payload, sender);
         sendResponse({ success: true as const });
         return false;
+      }
+
+      if (
+        (message as { type?: string })?.type ===
+        ETSY_ORDER_SYNC_EVENT_MESSAGE_TYPE
+      ) {
+        const syncMessage = message as {
+          type: string;
+          event?: Parameters<typeof dispatchEtsyOrderSyncEvent>[0];
+        };
+        if (!syncMessage.event) {
+          sendResponse({
+            accepted: false,
+            mode: "observe",
+            error: "缺少 Etsy 订单同步事件",
+          });
+          return false;
+        }
+
+        void dispatchEtsyOrderSyncEvent(syncMessage.event).then(
+          sendResponse,
+          (error: unknown) => {
+            sendResponse({
+              accepted: false,
+              mode: "observe",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        );
+        return true;
       }
 
       if ((message as { type?: string })?.type === ETSY_IMAGE_FETCH_PROXY_MESSAGE_TYPE) {

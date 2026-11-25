@@ -149,6 +149,45 @@
     }
   }
 
+  function getEtsyCancelOrderMatch(url, method) {
+    if (!url) return null;
+    try {
+      var u = new URL(url, window.location.origin);
+      if (u.hostname !== "www.etsy.com") return null;
+      var match = u.pathname.match(
+        /^\/api\/v3\/ajax\/shop\/(\d+)\/order\/refund-and-cancel\/(\d+)$/
+      );
+      if (!match) return null;
+      var m = (method || "GET").toUpperCase();
+      if (m !== "POST") return null;
+      return {
+        shopId: match[1],
+        orderId: match[2],
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getEtsyBatchCompleteMatch(url, method) {
+    if (!url) return null;
+    try {
+      var u = new URL(url, window.location.origin);
+      if (u.hostname !== "www.etsy.com") return null;
+      var match = u.pathname.match(
+        /^\/api\/v3\/ajax\/bespoke\/shop\/(\d+)\/mission-control\/order-state\/batch-complete$/
+      );
+      if (!match) return null;
+      var m = (method || "GET").toUpperCase();
+      if (m !== "POST") return null;
+      return {
+        shopId: match[1],
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   function parseUpdateShipByDateBody(bodyText) {
     if (typeof bodyText !== "string" || !bodyText.trim()) {
       return { newShipByDate: null };
@@ -163,6 +202,29 @@
       };
     } catch (e) {
       return { newShipByDate: null };
+    }
+  }
+
+  function readRequestBodyText(body) {
+    if (typeof body === "string") return body;
+    if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+      return body.toString();
+    }
+    return null;
+  }
+
+  function readXhrResponseText(xhr) {
+    try {
+      if (xhr.responseType === "json") {
+        return xhr.response == null ? "" : JSON.stringify(xhr.response);
+      }
+      if (xhr.responseType === "" || xhr.responseType === "text") {
+        return xhr.responseText;
+      }
+      if (typeof xhr.response === "string") return xhr.response;
+      return xhr.response == null ? "" : JSON.stringify(xhr.response);
+    } catch (e) {
+      return "";
     }
   }
 
@@ -195,6 +257,36 @@
       };
     }
 
+    var cancelOrderMatch = getEtsyCancelOrderMatch(url, method);
+    if (cancelOrderMatch) {
+      return {
+        kind: "cancelOrder",
+        requestType: getRuntimeScopedMessageType("etsy-cancel-order-request"),
+        responseType: getRuntimeScopedMessageType("etsy-cancel-order-response"),
+        requestedEvent: "cancelOrder.requested",
+        respondedEvent: "cancelOrder.responded",
+        requestIdPrefix:
+          transport === "xhr" ? "etsy-cancel-order-xhr" : "etsy-cancel-order",
+        emitLegacyMessage: false,
+        extra: cancelOrderMatch,
+      };
+    }
+
+    var batchCompleteMatch = getEtsyBatchCompleteMatch(url, method);
+    if (batchCompleteMatch) {
+      return {
+        kind: "batchComplete",
+        requestType: getRuntimeScopedMessageType("etsy-batch-complete-request"),
+        responseType: getRuntimeScopedMessageType("etsy-batch-complete-response"),
+        requestedEvent: "batchComplete.requested",
+        respondedEvent: "batchComplete.responded",
+        requestIdPrefix:
+          transport === "xhr" ? "etsy-batch-complete-xhr" : "etsy-batch-complete",
+        emitLegacyMessage: false,
+        extra: batchCompleteMatch,
+      };
+    }
+
     return null;
   }
 
@@ -215,6 +307,15 @@
       payload.newShipByDate = parsedBody.newShipByDate;
     }
 
+    if (descriptor.kind === "cancelOrder") {
+      payload.shopId = descriptor.extra.shopId;
+      payload.orderId = descriptor.extra.orderId;
+    }
+
+    if (descriptor.kind === "batchComplete") {
+      payload.shopId = descriptor.extra.shopId;
+    }
+
     return payload;
   }
 
@@ -233,6 +334,15 @@
       payload.shopId = descriptor.extra.shopId;
       payload.orderId = descriptor.extra.orderId;
       payload.newShipByDate = requestPayload ? requestPayload.newShipByDate : null;
+    }
+
+    if (descriptor.kind === "cancelOrder") {
+      payload.shopId = descriptor.extra.shopId;
+      payload.orderId = descriptor.extra.orderId;
+    }
+
+    if (descriptor.kind === "batchComplete") {
+      payload.shopId = descriptor.extra.shopId;
     }
 
     return payload;
@@ -268,8 +378,8 @@
             bodyPromise = clonedReq.text()["catch"](function () {
               return null;
             });
-          } else if (init && typeof init.body === "string") {
-            bodyPromise = Promise.resolve(init.body);
+          } else if (init) {
+            bodyPromise = Promise.resolve(readRequestBodyText(init.body));
           }
         } catch (e) {
           bodyPromise = Promise.resolve(null);
@@ -293,10 +403,12 @@
               method: method,
               url: url,
             });
-            window.postMessage(
-              requestPayload,
-              "*"
-            );
+            if (descriptor.emitLegacyMessage !== false) {
+              window.postMessage(
+                requestPayload,
+                "*"
+              );
+            }
             postBridgeEvent(descriptor.requestedEvent, requestPayload);
           } catch (e) {
             // 忽略 postMessage 错误
@@ -328,10 +440,12 @@
                     ok: response.ok,
                     url: url,
                   });
-                  window.postMessage(
-                    responsePayload,
-                    "*"
-                  );
+                  if (descriptor.emitLegacyMessage !== false) {
+                    window.postMessage(
+                      responsePayload,
+                      "*"
+                    );
+                  }
                   postBridgeEvent(descriptor.respondedEvent, responsePayload);
                 } catch (e) {
                   // 忽略 postMessage 错误
@@ -387,7 +501,7 @@
               requestId,
               _url,
               _method,
-              typeof body === "string" ? body : null
+              readRequestBodyText(body)
             );
             traceLog("page-inject.xhr.request.raw", {
               requestId: requestId,
@@ -395,10 +509,12 @@
               method: _method,
               url: _url,
             });
-            window.postMessage(
-              requestPayload,
-              "*"
-            );
+            if (descriptor.emitLegacyMessage !== false) {
+              window.postMessage(
+                requestPayload,
+                "*"
+              );
+            }
             postBridgeEvent(descriptor.requestedEvent, requestPayload);
           } catch (e) {
             // 忽略 postMessage 错误
@@ -412,7 +528,7 @@
                 _url,
                 xhr.status,
                 xhr.status >= 200 && xhr.status < 300,
-                xhr.responseText,
+                readXhrResponseText(xhr),
                 requestPayload
               );
               traceLog("page-inject.xhr.response.raw", {
@@ -422,10 +538,12 @@
                 ok: xhr.status >= 200 && xhr.status < 300,
                 url: _url,
               });
-              window.postMessage(
-                responsePayload,
-                "*"
-              );
+              if (descriptor.emitLegacyMessage !== false) {
+                window.postMessage(
+                  responsePayload,
+                  "*"
+                );
+              }
               postBridgeEvent(descriptor.respondedEvent, responsePayload);
             } catch (e) {
               // 忽略 postMessage 错误
